@@ -1,0 +1,53 @@
+# ─────────────────────────────────────────────────────────────────
+#  VoiceCloneDetection-SIH — AI + Audio Pipeline
+#  Member 1 — requirements.txt
+#
+#  Install:  pip install -r requirements.txt
+#  Python:   3.11 or 3.12 recommended (project uses 3.14 on dev machine)
+#
+#  All models are CPU-compatible.
+#  No training / fine-tuning dependencies included.
+# ─────────────────────────────────────────────────────────────────
+
+# ── Core numerics ─────────────────────────────────────────────────
+numpy>=1.26,<3.0
+scipy>=1.12
+
+# ── Audio I/O (fallback reader when FFmpeg subprocess is used) ────
+soundfile>=0.12          # libsndfile-based reader for WAV/FLAC/OGG
+librosa>=0.10            # audio utilities (resampling, MFCC helpers)
+
+# ── FFmpeg Python binding ──────────────────────────────────────────
+# Used to call FFmpeg as a subprocess with a clean API
+ffmpeg-python>=0.2.0
+# NOTE: FFmpeg binary must also be installed on the system:
+#   macOS:  brew install ffmpeg
+#   Ubuntu: sudo apt install ffmpeg
+
+# ── Silero VAD ────────────────────────────────────────────────────
+# Loaded via torch.hub (internet required on first run)
+torch>=2.2,<3.0          # CPU build is default on pip
+torchaudio>=2.2,<3.0
+
+# ── Deepfake / Anti-spoofing ──────────────────────────────────────
+# Pretrained model loaded via HuggingFace transformers
+transformers>=4.40
+# Wav2Vec2-based classifier option:
+# (weights downloaded automatically on first run)
+
+# ── SpeechBrain ECAPA-TDNN ────────────────────────────────────────
+speechbrain>=1.0
+
+# ── Faster-Whisper (CTranslate2-based, CPU-optimised ASR) ─────────
+faster-whisper>=1.0
+
+# ── Schema / serialisation ────────────────────────────────────────
+pydantic>=2.6            # for future API contract validation
+
+# ── Testing ───────────────────────────────────────────────────────
+pytest>=8.0
+pytest-cov>=5.0
+
+# ── Utilities ─────────────────────────────────────────────────────
+python-dotenv>=1.0       # load .env files for local dev config
+tqdm>=4.66               # progress bars for batch processing

@@ -1,0 +1,118 @@
+{
+  "checkpoint": "epoch_003.pt",
+  "epoch": 3,
+  "metrics": {
+    "loss": 0.07095987129572805,
+    "accuracy": 97.44405087747545,
+    "auc": 99.87114991728247,
+    "eer": 1.4616176022450071,
+    "eer_threshold": 0.20028430223464966
+  },
+  "config": {
+    "epochs": 10,
+    "lr": 0.0001,
+    "weight_decay": 0.0001,
+    "batch_size": 32,
+    "checkpoint_dir": "/Users/sivasankari/Desktop/VoiceCloneDetection-SIH/checkpoints",
+    "device": "mps",
+    "class_weights": null,
+    "save_best_metric": "eer",
+    "eval_every": 1,
+    "extra_metadata": {
+      "dataset_name": "ASVspoof2019_LA",
+      "dataset_path": "/Users/sivasankari/Desktop/VoiceCloneDetection-SIH/data/asvspoof2019/LA",
+      "train_protocol": "/Users/sivasankari/Desktop/VoiceCloneDetection-SIH/data/asvspoof2019/LA/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.train.trn.txt",
+      "dev_protocol": "/Users/sivasankari/Desktop/VoiceCloneDetection-SIH/data/asvspoof2019/LA/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt",
+      "class_mapping": {
+        "bonafide": 0,
+        "spoof": 1
+      },
+      "official_split": {
+        "train": 25380,
+        "dev": 24844,
+        "eval": "untouched"
+      },
+      "total_samples": 50224,
+      "real_count": 5128,
+      "fake_count": 45096,
+      "train_count": 25380,
+      "validation_count": 24844,
+      "train_class_distribution": {
+        "bonafide": 2580,
+        "spoof": 22800
+      },
+      "val_class_distribution": {
+        "bonafide": 2548,
+        "spoof": 22296
+      },
+      "missing_train_files": 0,
+      "missing_dev_files": 0,
+      "duplicate_train_ids": 0,
+      "duplicate_dev_ids": 0,
+      "train_dev_overlap_count": 0,
+      "model_architecture": "DeepfakeCNN",
+      "feature_parameters": {
+        "sample_rate": 16000,
+        "n_mels": 80,
+        "n_fft": 400,
+        "hop_length": 160,
+        "f_min": 20.0,
+        "f_max": 8000.0,
+        "eps": 1e-06,
+        "normalize": true
+      },
+      "epochs": 10,
+      "batch_size": 32,
+      "learning_rate": 0.0001,
+      "weight_decay": 0.0001
+    }
+  },
+  "metadata": {
+    "dataset_name": "ASVspoof2019_LA",
+    "dataset_path": "/Users/sivasankari/Desktop/VoiceCloneDetection-SIH/data/asvspoof2019/LA",
+    "train_protocol": "/Users/sivasankari/Desktop/VoiceCloneDetection-SIH/data/asvspoof2019/LA/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.train.trn.txt",
+    "dev_protocol": "/Users/sivasankari/Desktop/VoiceCloneDetection-SIH/data/asvspoof2019/LA/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt",
+    "class_mapping": {
+      "bonafide": 0,
+      "spoof": 1
+    },
+    "official_split": {
+      "train": 25380,
+      "dev": 24844,
+      "eval": "untouched"
+    },
+    "total_samples": 50224,
+    "real_count": 5128,
+    "fake_count": 45096,
+    "train_count": 25380,
+    "validation_count": 24844,
+    "train_class_distribution": {
+      "bonafide": 2580,
+      "spoof": 22800
+    },
+    "val_class_distribution": {
+      "bonafide": 2548,
+      "spoof": 22296
+    },
+    "missing_train_files": 0,
+    "missing_dev_files": 0,
+    "duplicate_train_ids": 0,
+    "duplicate_dev_ids": 0,
+    "train_dev_overlap_count": 0,
+    "model_architecture": "DeepfakeCNN",
+    "feature_parameters": {
+      "sample_rate": 16000,
+      "n_mels": 80,
+      "n_fft": 400,
+      "hop_length": 160,
+      "f_min": 20.0,
+      "f_max": 8000.0,
+      "eps": 1e-06,
+      "normalize": true
+    },
+    "epochs": 10,
+    "batch_size": 32,
+    "learning_rate": 0.0001,
+    "weight_decay": 0.0001
+  }
+}

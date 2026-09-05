@@ -1,0 +1,88 @@
+# ──────────────────────────────────────────────
+#  VoiceCloneDetection-SIH  —  .gitignore
+# ──────────────────────────────────────────────
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# Environment variables
+.env.local
+.env.*.local
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+*.xml
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# MyPy
+.mypy_cache/
+
+# IDEs
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Model weights / large binaries (download at runtime)
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.onnx
+*.h5
+*.safetensors
+pretrained_models/
+
+# HuggingFace cache (use HF_HOME env var to redirect)
+# Uncomment if you put the cache inside the repo:
+# .cache/
+
+# Audio samples — keep synthetic test fixtures, ignore large real recordings
+# To ignore ALL audio: uncomment the lines below
+# samples/genuine/*.wav
+# samples/cloned/*.wav
+# samples/imposter/*.wav
+# Large real recording exclusions (>10 MB) — add specific filenames as needed:
+
+# Logs
+*.log
+logs/
+
+# Temp / scratch
+tmp/
+temp/
+scratch/
+
+# Local datasets - never commit
+/data/

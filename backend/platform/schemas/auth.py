@@ -37,7 +37,8 @@ class UserCreateDto(BaseModel):
     email: str
     password: str = Field(..., min_length=6)
     full_name: str
-    role: str = "USER"  # USER, SECURITY_OPERATOR, ADMIN
+    role: str = "SECURITY_OPERATOR"  # USER, SECURITY_OPERATOR, ADMIN
+    org_id: Optional[str] = None
 
 
 class TokenResponse(BaseModel):

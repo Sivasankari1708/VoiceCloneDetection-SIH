@@ -22,10 +22,10 @@ export function AuditLogs() {
 
   const filteredLogs = logs.filter((log) => {
     const matchesSearch =
-      log.actor.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.incidentId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.newState.toLowerCase().includes(searchTerm.toLowerCase());
+      (log.actor?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (log.incidentId?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (log.action?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (log.newState?.toLowerCase() || '').includes(searchTerm.toLowerCase());
 
     const matchesAction = actionFilter === 'ALL' || log.action === actionFilter;
     return matchesSearch && matchesAction;

@@ -1,6 +1,6 @@
 // src/components/layout/AppLayout.jsx
-import React, { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Outlet, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { PrivacyBanner } from '../common/PrivacyBanner';
@@ -10,6 +10,19 @@ import { useIncidents } from '../../hooks/useIncidents';
 export function AppLayout() {
   const [isAlertModalOpen, setIsAlertModalOpen] = useState(false);
   const { incidents, acknowledge, escalate } = useIncidents();
+  const navigate = useNavigate();
+
+  // Auth guard — redirect to login if no token present
+  useEffect(() => {
+    const token = sessionStorage.getItem('voiceshield_auth_token');
+    if (!token) {
+      navigate('/', { replace: true });
+    }
+  }, [navigate]);
+
+  // Don't render protected content if unauthenticated
+  const token = sessionStorage.getItem('voiceshield_auth_token');
+  if (!token) return null;
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-soc-bg text-soc-text font-sans">

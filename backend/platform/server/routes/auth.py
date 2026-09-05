@@ -10,11 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.platform.config import platform_config
-from backend.platform.db.models import User
+from backend.platform.db.models import Organization, User
 from backend.platform.db.session import get_db
-from backend.platform.schemas.auth import LoginRequest, TokenResponse, UserDto
+from backend.platform.schemas.auth import LoginRequest, TokenResponse, UserCreateDto, UserDto
 from backend.platform.server.dependencies import get_current_user
-from backend.platform.services.auth_service import create_access_token, verify_password
+from backend.platform.services.auth_service import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
@@ -45,6 +45,55 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
         token_type="bearer",
         expires_in_minutes=platform_config.access_token_expire_minutes,
         user=UserDto(**user.to_dict()),
+    )
+
+
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+def register(req: UserCreateDto, db: Session = Depends(get_db)):
+    """Register a new operator or user and return signed JWT."""
+    existing = db.query(User).filter(
+        (User.username == req.username) | (User.email == req.email)
+    ).first()
+    if existing:
+        if existing.username == req.username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Username '{req.username}' is already registered.",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Email '{req.email}' is already registered.",
+            )
+
+    org_id = req.org_id
+    if not org_id:
+        org = db.query(Organization).filter_by(is_active=True).first()
+        if not org:
+            org = Organization(name="Apex Financial Corp (Demo)", code="DEMO_CORP")
+            db.add(org)
+            db.flush()
+        org_id = org.id
+
+    new_user = User(
+        org_id=org_id,
+        username=req.username,
+        email=req.email,
+        hashed_password=hash_password(req.password),
+        full_name=req.full_name,
+        role=req.role or "SECURITY_OPERATOR",
+        is_active=True,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    token = create_access_token(new_user)
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        expires_in_minutes=platform_config.access_token_expire_minutes,
+        user=UserDto(**new_user.to_dict()),
     )
 
 

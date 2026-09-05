@@ -1,22 +1,70 @@
 // src/pages/Overview.jsx
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import { KPICards } from '../components/dashboard/KPICards';
 import { SecurityPosture } from '../components/dashboard/SecurityPosture';
 import { SystemStatus } from '../components/dashboard/SystemStatus';
 import { ActiveThreatsTable } from '../components/dashboard/ActiveThreatsTable';
 import { CriticalAlertBanner } from '../components/alerts/CriticalAlertBanner';
 import { useIncidents } from '../hooks/useIncidents';
-import { INITIAL_KPIS, INITIAL_SYSTEM_SERVICES } from '../utils/mockData';
 import { Radio } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { api } from '../services/api';
 
 export function Overview() {
-  const { incidents, loading, error, acknowledge, escalate } = useIncidents();
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [health, setHealth] = useState(null);
+  const [healthLoading, setHealthLoading] = useState(true);
+  const [healthError, setHealthError] = useState(null);
+  const { incidents, acknowledge, escalate } = useIncidents();
+
+  // Fetch real backend statistics
+  useEffect(() => {
+    const loadOverviewData = async () => {
+      try {
+        const [statsData, healthData] = await Promise.all([
+          api.getStats(),
+          api.getSystemHealth(),
+        ]);
+
+        console.log('Real backend stats:', statsData);
+        console.log('Real backend health:', healthData);
+
+        setStats(statsData);
+        setHealth(healthData);
+      } catch (err) {
+        console.error('Failed to load overview data:', err);
+        setError(err.message);
+        setHealthError(err.message);
+      } finally {
+        setLoading(false);
+        setHealthLoading(false);
+      }
+    };
+
+    loadOverviewData();
+  }, []);
+  // Provide real database statistics to KPICards
+  const kpis = useMemo(() => {
+    return {
+      underAnalysis: stats?.calls?.active ?? 0,
+      incidentsToday: stats?.incidents?.total ?? incidents.length,
+      protectedIdentities: stats?.protected_identities ?? 0,
+      totalCalls: stats?.calls?.total ?? 0,
+      clonesDetected: stats?.calls?.clones_detected ?? 0,
+      openInvestigations: stats?.incidents?.open ?? 0,
+      confirmedAttacks: stats?.incidents?.confirmed_attacks ?? 0,
+    };
+  }, [stats, incidents]);
 
   // Find most severe active critical incident for banner
   const activeCriticalIncident = useMemo(() => {
     return incidents.find(
-      (inc) => inc.severity === 'CRITICAL' && inc.status !== 'RESOLVED' && inc.status !== 'FALSE_POSITIVE'
+      (inc) =>
+        inc.severity === 'CRITICAL' &&
+        inc.status !== 'RESOLVED' &&
+        inc.status !== 'FALSE_POSITIVE'
     );
   }, [incidents]);
 
@@ -28,6 +76,7 @@ export function Overview() {
           <h2 className="text-base font-mono font-bold tracking-wider text-slate-100 uppercase">
             Security Operations Center Overview
           </h2>
+
           <p className="text-2xs font-mono text-slate-400 mt-0.5">
             Real-time biometric voice verification, acoustic deepfake classification, and fraud intent defense
           </p>
@@ -44,7 +93,7 @@ export function Overview() {
         </div>
       </div>
 
-      {/* Prominent Critical Security Alert Banner (Section 6) */}
+      {/* Critical Security Alert */}
       {activeCriticalIncident && (
         <CriticalAlertBanner
           incident={activeCriticalIncident}
@@ -53,22 +102,46 @@ export function Overview() {
         />
       )}
 
-      {/* KPI Cards (Section 4) */}
-      <KPICards kpis={INITIAL_KPIS} incidents={incidents} />
+      {/* KPI Cards */}
+      {loading ? (
+        <div className="text-slate-400 font-mono text-sm">
+          Loading security telemetry...
+        </div>
+      ) : error ? (
+        <div className="text-red-400 font-mono text-sm">
+          Failed to load security telemetry: {error}
+        </div>
+      ) : (
+        <KPICards kpis={kpis} incidents={incidents} />
+      )}
 
-      {/* Posture and System Status Split */}
+      {/* Posture and System Status */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7">
           <SecurityPosture incidents={incidents} />
         </div>
+
         <div className="lg:col-span-5">
-          <SystemStatus services={INITIAL_SYSTEM_SERVICES} />
+          {healthLoading ? (
+            <div className="text-slate-400 font-mono text-sm">
+              Loading system health...
+            </div>
+          ) : healthError ? (
+            <div className="text-red-400 font-mono text-sm">
+              Failed to load system health: {healthError}
+            </div>
+          ) : (
+            <SystemStatus services={health?.services ?? []} />
+          )}
         </div>
       </div>
 
-      {/* Active Threats Table (Section 4) */}
+      {/* Active Threats */}
       <div>
-        <ActiveThreatsTable incidents={incidents} title="Active Voice Impersonation Incidents" />
+        <ActiveThreatsTable
+          incidents={incidents}
+          title="Active Voice Impersonation Incidents"
+        />
       </div>
     </div>
   );

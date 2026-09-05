@@ -69,6 +69,38 @@ def test_auth_login_and_me(client, tokens):
     assert bad_res.status_code == 401
 
 
+def test_auth_register_and_analytics(client, tokens):
+    import uuid
+    new_uname = f"analyst_{uuid.uuid4().hex[:6]}"
+    # Register new user
+    res = client.post("/api/auth/register", json={
+        "username": new_uname,
+        "email": f"{new_uname}@apexcorp.com",
+        "password": "operatorpassword123",
+        "full_name": "Test Security Analyst",
+        "role": "SECURITY_OPERATOR"
+    })
+    assert res.status_code == 201
+    reg_data = res.json()
+    assert "access_token" in reg_data
+    assert reg_data["user"]["username"] == new_uname
+    new_token = reg_data["access_token"]
+
+    # Test analytics
+    analytics_res = client.get("/api/analytics", headers={"Authorization": f"Bearer {new_token}"})
+    assert analytics_res.status_code == 200
+    adata = analytics_res.json()
+    assert "total_calls_analyzed" in adata
+    assert "attack_type_distribution" in adata
+
+    # Test reports
+    reports_res = client.get("/api/reports", headers={"Authorization": f"Bearer {new_token}"})
+    assert reports_res.status_code == 200
+    rdata = reports_res.json()
+    assert isinstance(rdata, list)
+    assert len(rdata) > 0
+
+
 def test_protected_identities_endpoints(client, tokens):
     # List identities
     res = client.get(

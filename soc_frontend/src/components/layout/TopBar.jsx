@@ -1,16 +1,20 @@
 // src/components/layout/TopBar.jsx
 import React, { useState, useEffect } from 'react';
-import { Shield, Bell, User, Clock, Terminal } from 'lucide-react';
+import { Shield, Bell, User, Clock, LogOut } from 'lucide-react';
 import { StatusIndicator } from '../common/StatusIndicator';
 import { useIncidents } from '../../hooks/useIncidents';
 import { useNavigate } from 'react-router-dom';
+import { api } from '../../services/api';
 
 export function TopBar({ onOpenAlertModal }) {
   const [utcTime, setUtcTime] = useState('');
+  const [currentUser, setCurrentUser] = useState(() => api.getUser());
   const { incidents } = useIncidents();
   const navigate = useNavigate();
 
-  const criticalCount = incidents.filter(i => i.severity === 'CRITICAL' && i.status !== 'RESOLVED' && i.status !== 'FALSE_POSITIVE').length;
+  const criticalCount = incidents.filter(
+    i => i.severity === 'CRITICAL' && i.status !== 'RESOLVED' && i.status !== 'FALSE_POSITIVE'
+  ).length;
 
   useEffect(() => {
     const updateTime = () => {
@@ -21,6 +25,30 @@ export function TopBar({ onOpenAlertModal }) {
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    // If user info isn't cached in sessionStorage, query /api/auth/me
+    if (!currentUser && api.getToken()) {
+      api.getCurrentUser()
+        .then(u => setCurrentUser(u))
+        .catch(() => {});
+    }
+  }, [currentUser]);
+
+  const handleLogout = () => {
+    api.logout();
+    navigate('/');
+  };
+
+  const displayName = currentUser?.full_name || currentUser?.username || 'Security Operator';
+  const displayRole = currentUser?.role ? currentUser.role.replace('_', ' ') : 'SOC Lead';
+  const initials = displayName
+    .split(' ')
+    .filter(Boolean)
+    .map(p => p[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || 'OP';
 
   return (
     <header className="h-14 bg-soc-card border-b border-soc-border px-5 flex items-center justify-between shrink-0 z-20">
@@ -67,15 +95,27 @@ export function TopBar({ onOpenAlertModal }) {
           <span className="font-semibold">{criticalCount} Critical</span>
         </button>
 
-        {/* Analyst Profile */}
-        <div className="flex items-center gap-2 pl-3 border-l border-soc-border">
+        {/* Analyst Profile & Logout */}
+        <div className="flex items-center gap-2.5 pl-3 border-l border-soc-border">
           <div className="w-7 h-7 rounded bg-slate-800 border border-slate-700 flex items-center justify-center text-soc-accent font-mono text-xs font-bold">
-            SC
+            {initials}
           </div>
           <div className="hidden sm:block text-left font-mono">
-            <div className="text-xs font-semibold text-slate-200 leading-none">Sarah Chen</div>
-            <div className="text-2xs text-soc-muted uppercase tracking-wider mt-0.5">SOC Lead</div>
+            <div className="text-xs font-semibold text-slate-200 leading-none truncate max-w-[120px]">
+              {displayName}
+            </div>
+            <div className="text-2xs text-soc-muted uppercase tracking-wider mt-0.5">
+              {displayRole}
+            </div>
           </div>
+
+          <button
+            onClick={handleLogout}
+            title="Sign Out"
+            className="p-1.5 rounded text-slate-400 hover:text-red-400 hover:bg-red-950/30 transition ml-1"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
     </header>

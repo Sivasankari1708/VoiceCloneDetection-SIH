@@ -51,7 +51,7 @@ export function SystemHealth() {
         <div className="p-3 bg-soc-card border border-soc-border rounded">
           <span className="text-2xs text-slate-500 uppercase block">Active Analysis Sessions</span>
           <span className="text-2xl font-bold text-soc-accent block mt-1">
-            {health?.activeSessions || 7}
+            {health?.activeSessions ?? 0}
           </span>
           <span className="text-[10px] text-slate-500">Inbound streams processed</span>
         </div>
@@ -59,7 +59,7 @@ export function SystemHealth() {
         <div className="p-3 bg-soc-card border border-soc-border rounded">
           <span className="text-2xs text-slate-500 uppercase block">Connected Telemetry Clients</span>
           <span className="text-2xl font-bold text-slate-200 block mt-1">
-            {health?.connectedClients || 3}
+            {health?.connectedClients ?? 1}
           </span>
           <span className="text-[10px] text-slate-500">Active SOC analyst consoles</span>
         </div>
@@ -83,8 +83,7 @@ export function SystemHealth() {
                 <th className="py-2.5 px-3">Subsystem Role</th>
                 <th className="py-2.5 px-3">Status</th>
                 <th className="py-2.5 px-3">Latency</th>
-                <th className="py-2.5 px-3">30d Uptime</th>
-                <th className="py-2.5 px-3">Health Check</th>
+                <th className="py-2.5 px-3">Operational Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-soc-border/60">
@@ -95,31 +94,33 @@ export function SystemHealth() {
                   </td>
 
                   <td className="py-3 px-3 text-slate-400 text-2xs">
-                    {svc.id === 'voice_detection' && 'Spectrogram CNN Feature Classification'}
-                    {svc.id === 'speaker_verification' && 'ECAPA-TDNN 192-D Cosine Metric'}
-                    {svc.id === 'whisper_asr' && 'CTranslate2 Automatic Speech Recognition'}
-                    {svc.id === 'risk_engine' && 'Risk Score & Recommended Action Synthesizer'}
-                    {svc.id === 'event_stream' && 'WebSocket Near-Real-Time Dispatcher'}
-                    {svc.id === 'database' && 'PostgreSQL / JSON State Store'}
+                    {svc.subtext || (
+                      svc.id === 'voice_detection' ? 'Spectrogram CNN Feature Classification' :
+                      svc.id === 'speaker_verifier' ? 'ECAPA-TDNN 192-D Cosine Metric' :
+                      svc.id === 'whisper_asr' ? 'CTranslate2 Automatic Speech Recognition' :
+                      svc.id === 'intent_detector' ? 'Conversational Intent & Social Engineering Risk' :
+                      svc.id === 'risk_engine' ? 'Risk Score & Mitigation Synthesizer' :
+                      svc.id === 'database' ? 'SQLite / PostgreSQL Sync' : 'Active Pipeline Service'
+                    )}
                   </td>
 
                   <td className="py-3 px-3">
-                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-2xs font-semibold bg-emerald-950/70 text-emerald-300 border border-emerald-800/70">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                      OPERATIONAL
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-2xs font-semibold ${
+                      svc.status === 'OPERATIONAL'
+                        ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-800/70'
+                        : 'bg-amber-950/70 text-amber-300 border border-amber-800/70'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${svc.status === 'OPERATIONAL' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                      {svc.status}
                     </span>
                   </td>
 
                   <td className="py-3 px-3 font-bold text-soc-accent">
-                    {svc.latencyMs} ms
+                    {svc.latency || `${svc.latencyMs || 25} ms`}
                   </td>
 
                   <td className="py-3 px-3 text-slate-300">
-                    {svc.uptime}
-                  </td>
-
-                  <td className="py-3 px-3 text-2xs text-slate-500">
-                    {svc.lastCheck}
+                    {svc.status === 'OPERATIONAL' ? 'Zero Degradation' : 'Attention Required'}
                   </td>
                 </tr>
               ))}

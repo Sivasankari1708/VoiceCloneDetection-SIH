@@ -90,7 +90,7 @@ from typing import List, Optional, Union
 
 import numpy as np
 import torch
-
+from speechbrain.utils.fetching import LocalStrategy
 from backend.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -297,6 +297,7 @@ class SpeakerVerifier:
                 source=source,
                 savedir=cache_dir,
                 run_opts={"device": "cpu"},
+                local_strategy=LocalStrategy.COPY,
             )
         except Exception as exc:
             raise SpeakerVerifierError(

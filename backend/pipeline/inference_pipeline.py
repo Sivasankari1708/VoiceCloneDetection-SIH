@@ -408,10 +408,17 @@ _DEFAULT_PIPELINE: Optional[InferencePipeline] = None
 
 
 def get_default_pipeline() -> InferencePipeline:
-    """Return or initialize global singleton pipeline instance."""
     global _DEFAULT_PIPELINE
+
     if _DEFAULT_PIPELINE is None:
-        _DEFAULT_PIPELINE = InferencePipeline()
+        from backend.platform.db.speaker_repo_adapter import (
+            DatabaseSpeakerRepository
+        )
+
+        _DEFAULT_PIPELINE = InferencePipeline(
+            speaker_repository=DatabaseSpeakerRepository()
+        )
+
     return _DEFAULT_PIPELINE
 
 

@@ -12,7 +12,7 @@ import io
 import tempfile
 from pathlib import Path
 from typing import List, Optional
-
+from backend.audio.decoder import load_audio
 import numpy as np
 from sqlalchemy.orm import Session
 
@@ -67,12 +67,24 @@ class SpeakerService:
                 else:
                     # Treat as base64 audio
                     raw_bytes = base64.b64decode(raw_sample)
-                    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+
+                    tmp = tempfile.NamedTemporaryFile(
+                        suffix=".mp3",
+                        delete=False
+                    )
+
                     tmp.write(raw_bytes)
                     tmp.flush()
                     tmp.close()
+
                     temp_files.append(tmp.name)
-                    parsed_samples.append(tmp.name)
+
+                    waveform, sample_rate = load_audio(
+                        tmp.name,
+                        target_sr=16000
+                    )
+
+                    parsed_samples.append(waveform)
 
             log.info("[SpeakerService] Enrolling %d samples for '%s' (%s)...", len(parsed_samples), identity.full_name, speaker_id)
 

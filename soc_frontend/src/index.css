@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-soc-bg text-soc-text font-sans antialiased overflow-x-hidden;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Compact professional custom scrollbars for high-density tables and logs */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #090D16;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1E293B;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #334155;
+  }
+}
+
+@layer utilities {
+  .soc-border {
+    @apply border border-soc-border;
+  }
+  .soc-panel {
+    @apply bg-soc-card border border-soc-border;
+  }
+  .soc-panel-hover {
+    @apply hover:border-soc-borderLight transition-colors duration-150;
+  }
+  .soc-header {
+    @apply uppercase tracking-wider text-xs font-semibold text-soc-muted font-mono;
+  }
+}

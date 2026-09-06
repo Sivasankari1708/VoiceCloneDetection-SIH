@@ -158,6 +158,9 @@ class WhisperASR:
         self.download_root = str(download_root) if download_root else None
         self.beam_size = beam_size
         self.temperature = temperature
+        self.default_language = (
+            config.whisper_language if config and getattr(config, "whisper_language", None) else "en"
+        )
 
         self.cache_key = (self.model_size, self.device, self.compute_type)
 
@@ -362,13 +365,15 @@ class WhisperASR:
                 )
 
         # 3. Whisper inference
+        effective_language = language if language is not None else getattr(self, "default_language", "en")
         segments_gen, info = self._model.transcribe(
             waveform,
             beam_size=self.beam_size,
             temperature=self.temperature,
-            language=language,
+            language=effective_language,
             task=task,
             condition_on_previous_text=False,
+            initial_prompt="This is an English business voice phone call conversation." if effective_language == "en" else None,
         )
 
         segment_list: List[Dict[str, Any]] = []
@@ -394,6 +399,17 @@ class WhisperASR:
         avg_no_speech_prob = (
             float(np.mean(no_speech_probs)) if no_speech_probs else (1.0 if not full_transcript else 0.0)
         )
+
+        # Silence artifact & common hallucination suppression
+        HALLUCINATION_PHRASES = {
+            "thank you.", "thank you very much.", "thanks for watching.", "thanks for watching!",
+            "see you in the next video.", "subtitles by", "bye-bye.", "bye!",
+            "thank you", "thanks.", "watching", "see you next time."
+        }
+        if full_transcript.lower().strip() in HALLUCINATION_PHRASES and (avg_no_speech_prob > 0.3 or len(waveform) <= 16000):
+            log.debug("Suppressed Whisper silence hallucination: '%s'", full_transcript)
+            full_transcript = ""
+            segment_list = []
 
         # Structured logging as requested
         log.info(

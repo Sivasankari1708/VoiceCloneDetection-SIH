@@ -94,6 +94,13 @@ class ApiService {
       throw error;
     }
 
+    const data = await response.json();
+    if (data?.access_token) {
+      this.setToken(data.access_token);
+    }
+    if (data?.user) {
+      this.setUser(data.user);
+    }
     return data;
   }
 
@@ -143,6 +150,13 @@ class ApiService {
       throw error;
     }
 
+    const data = await response.json();
+    if (data?.access_token) {
+      this.setToken(data.access_token);
+    }
+    if (data?.user) {
+      this.setUser(data.user);
+    }
     return data;
   }
 

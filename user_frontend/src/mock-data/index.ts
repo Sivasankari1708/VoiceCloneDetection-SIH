@@ -1,0 +1,233 @@
+import type { User, AppNotification, CallHistoryItem, CallerIdentity } from '../types';
+
+// ─── Mock Current User ────────────────────────────────────────
+export const MOCK_USER: User = {
+  id: 'usr-001',
+  name: 'Priya Menon',
+  email: 'priya.menon@techcorp.com',
+  employeeId: 'EMP-2024-0847',
+  organization: 'TechCorp India',
+  role: 'Finance Manager',
+  avatarInitials: 'PM',
+  accountStatus: 'active',
+};
+
+// ─── Mock Callers ─────────────────────────────────────────────
+export const MOCK_CALLERS: Record<string, CallerIdentity> = {
+  rajesh_kumar: {
+    name: 'Rajesh Kumar',
+    claimedRole: 'CFO',
+    organization: 'TechCorp India',
+    status: 'verified',
+    statusMessage: 'Caller identity verified',
+  },
+  anita_sharma: {
+    name: 'Anita Sharma',
+    claimedRole: 'HR Manager',
+    organization: 'TechCorp India',
+    status: 'verified',
+    statusMessage: 'Caller identity verified',
+  },
+  vikram_singh: {
+    name: 'Vikram Singh',
+    claimedRole: 'IT Support',
+    organization: 'TechCorp India',
+    status: 'failed',
+    statusMessage: 'Caller identity could not be verified',
+  },
+  unknown_caller: {
+    name: 'Unknown Caller',
+    claimedRole: 'CFO',
+    organization: 'TechCorp India',
+    status: 'failed',
+    statusMessage: 'Caller identity could not be verified',
+  },
+};
+
+// ─── Mock Call History ────────────────────────────────────────
+export const MOCK_CALL_HISTORY: CallHistoryItem[] = [
+  {
+    id: 'call-001',
+    caller: MOCK_CALLERS.rajesh_kumar,
+    source: 'browser',
+    startTime: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2h ago
+    endTime: new Date(Date.now() - 2 * 60 * 60 * 1000 + 3 * 60 * 1000),
+    duration: 180,
+    finalSeverity: 'CRITICAL',
+    finalScore: 92,
+    finalAction: 'Call ended — suspicious activity',
+    scenarioId: 'ai_cloned_cfo',
+    transcript: [
+      { id: 't1', speaker: 'caller', text: 'Hi, I need your help with something urgent.', timestamp: 5000 },
+      { id: 't2', speaker: 'caller', text: 'I need you to handle a payment urgently.', timestamp: 45000 },
+      { id: 't3', speaker: 'caller', text: 'Please send me the OTP so we can complete it.', timestamp: 90000 },
+    ],
+    timeline: [
+      { time: '10:42 AM', description: 'Call started', type: 'info' },
+      { time: '10:43 AM', description: 'Security status changed to LOW', type: 'warning' },
+      { time: '10:44 AM', description: 'Payment request detected', type: 'warning' },
+      { time: '10:44 AM', description: 'Caller identity could not be verified', type: 'critical' },
+      { time: '10:45 AM', description: 'OTP request detected — security warning shown', type: 'critical' },
+      { time: '10:45 AM', description: 'Call ended', type: 'info' },
+    ],
+    summary: 'The caller claimed to be your CFO and requested an OTP urgently. The caller\'s voice could not be verified as authentic, and their identity could not be confirmed.',
+    recommendation: 'Do not share sensitive information. Verify the caller through a trusted channel before taking any action.',
+    signals: [
+      { type: 'authority_claim', label: 'Authority claim', severity: 'LOW' },
+      { type: 'urgent_request', label: 'Urgent request', severity: 'MEDIUM' },
+      { type: 'payment_request', label: 'Payment request', severity: 'HIGH' },
+      { type: 'otp_request', label: 'OTP / code request', severity: 'CRITICAL' },
+    ],
+  },
+  {
+    id: 'call-002',
+    caller: MOCK_CALLERS.anita_sharma,
+    source: 'browser',
+    startTime: new Date(Date.now() - 5 * 60 * 60 * 1000),
+    endTime: new Date(Date.now() - 5 * 60 * 60 * 1000 + 7 * 60 * 1000),
+    duration: 420,
+    finalSeverity: 'SAFE',
+    finalScore: 18,
+    finalAction: 'Call completed normally',
+    transcript: [
+      { id: 't1', speaker: 'caller', text: 'Hi Priya, I wanted to discuss the leave policy.', timestamp: 3000 },
+      { id: 't2', speaker: 'caller', text: 'When is a good time to schedule a meeting?', timestamp: 15000 },
+    ],
+    timeline: [
+      { time: '09:15 AM', description: 'Call started', type: 'info' },
+      { time: '09:22 AM', description: 'Call completed', type: 'success' },
+    ],
+    summary: 'A normal conversation with HR about leave policy. No suspicious activity was detected.',
+    recommendation: 'No action required.',
+    signals: [],
+  },
+  {
+    id: 'call-003',
+    caller: MOCK_CALLERS.vikram_singh,
+    source: 'browser',
+    startTime: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    endTime: new Date(Date.now() - 24 * 60 * 60 * 1000 + 4 * 60 * 1000),
+    duration: 240,
+    finalSeverity: 'HIGH',
+    finalScore: 78,
+    finalAction: 'Verification requested',
+    transcript: [
+      { id: 't1', speaker: 'caller', text: 'This is IT support. We need to verify your credentials.', timestamp: 5000 },
+      { id: 't2', speaker: 'caller', text: 'Please provide your login password so we can fix the issue.', timestamp: 30000 },
+    ],
+    timeline: [
+      { time: '02:30 PM', description: 'Call started', type: 'info' },
+      { time: '02:31 PM', description: 'Credential request detected', type: 'warning' },
+      { time: '02:32 PM', description: 'Caller identity could not be verified', type: 'critical' },
+      { time: '02:34 PM', description: 'User requested verification', type: 'info' },
+    ],
+    summary: 'A caller claiming to be IT support requested login credentials. The caller\'s identity could not be verified.',
+    recommendation: 'Never share passwords. Contact IT support through official channels to verify the request.',
+    signals: [
+      { type: 'authority_claim', label: 'Authority claim', severity: 'LOW' },
+      { type: 'credential_request', label: 'Credential request', severity: 'CRITICAL' },
+    ],
+  },
+  {
+    id: 'call-004',
+    caller: MOCK_CALLERS.rajesh_kumar,
+    source: 'browser',
+    startTime: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+    endTime: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000 + 12 * 60 * 1000),
+    duration: 720,
+    finalSeverity: 'SAFE',
+    finalScore: 15,
+    finalAction: 'Call completed normally',
+    transcript: [
+      { id: 't1', speaker: 'caller', text: 'Hi, I wanted to discuss the Q3 budget review.', timestamp: 5000 },
+      { id: 't2', speaker: 'caller', text: 'Can you share the finance report before Friday?', timestamp: 60000 },
+    ],
+    timeline: [
+      { time: '11:00 AM', description: 'Call started', type: 'info' },
+      { time: '11:12 AM', description: 'Call completed', type: 'success' },
+    ],
+    summary: 'A normal business conversation about Q3 budget review with the CFO.',
+    recommendation: 'No action required.',
+    signals: [],
+  },
+  {
+    id: 'call-005',
+    caller: MOCK_CALLERS.unknown_caller,
+    source: 'browser',
+    startTime: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+    endTime: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000 + 2 * 60 * 1000),
+    duration: 120,
+    finalSeverity: 'CRITICAL',
+    finalScore: 96,
+    finalAction: 'Call ended — caller could not be verified',
+    transcript: [
+      { id: 't1', speaker: 'caller', text: 'Transfer the funds immediately. This is extremely urgent.', timestamp: 5000 },
+    ],
+    timeline: [
+      { time: '04:15 PM', description: 'Call started', type: 'info' },
+      { time: '04:15 PM', description: 'Urgent request detected', type: 'warning' },
+      { time: '04:16 PM', description: 'Payment request detected', type: 'critical' },
+      { time: '04:16 PM', description: 'Caller identity could not be verified', type: 'critical' },
+      { time: '04:17 PM', description: 'Call ended', type: 'info' },
+    ],
+    summary: 'An unidentified caller urgently demanded a financial transfer while claiming to be the CFO.',
+    recommendation: 'Never transfer funds based on a phone call alone. Always verify through official processes.',
+    signals: [
+      { type: 'urgent_request', label: 'Urgent request', severity: 'MEDIUM' },
+      { type: 'payment_request', label: 'Payment request', severity: 'HIGH' },
+    ],
+  },
+];
+
+// ─── Mock Notifications ───────────────────────────────────────
+export const MOCK_NOTIFICATIONS: AppNotification[] = [
+  {
+    id: 'notif-001',
+    type: 'security_alert',
+    title: 'Critical security alert',
+    message: 'A suspicious call was detected. The caller could not be verified.',
+    read: false,
+    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    callId: 'call-001',
+    actionLabel: 'View details',
+    actionRoute: '/history/call-001',
+  },
+  {
+    id: 'notif-002',
+    type: 'security_reminder',
+    title: 'Security reminder',
+    message: 'Never share OTPs or passwords during an unexpected call, even if the caller claims to be a senior executive.',
+    read: false,
+    createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000),
+  },
+  {
+    id: 'notif-003',
+    type: 'verification_complete',
+    title: 'Verification available',
+    message: 'Your MFA device is set up and ready for independent caller verification.',
+    read: true,
+    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+  },
+  {
+    id: 'notif-004',
+    type: 'call_summary',
+    title: 'Call summary — Anita Sharma',
+    message: 'A safe call with HR was completed successfully. No security concerns were detected.',
+    read: true,
+    createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000),
+    callId: 'call-002',
+    actionLabel: 'View call details',
+    actionRoute: '/history/call-002',
+  },
+  {
+    id: 'notif-005',
+    type: 'security_alert',
+    title: 'Suspicious call blocked',
+    message: 'A call with a high risk score was flagged. Your security team has been notified.',
+    read: true,
+    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+    callId: 'call-005',
+    actionLabel: 'View details',
+    actionRoute: '/history/call-005',
+  },
+];

@@ -1,0 +1,65 @@
+/* VoiceShield — global styles */
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --vs-safe: #16a34a;
+    --vs-low: #2563eb;
+    --vs-medium: #d97706;
+    --vs-high: #ea580c;
+    --vs-critical: #dc2626;
+  }
+
+  * {
+    @apply border-slate-200;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+
+  .waveform-bar {
+    transform-origin: bottom;
+  }
+}
+
+/* Waveform animation keyframes */
+@keyframes wave-pulse {
+  0%, 100% { transform: scaleY(0.2); }
+  50% { transform: scaleY(1); }
+}
+
+@keyframes severity-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fade-in-up {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.3s ease-out;
+}
+
+.animate-severity-pulse {
+  animation: severity-pulse 2s ease-in-out infinite;
+}

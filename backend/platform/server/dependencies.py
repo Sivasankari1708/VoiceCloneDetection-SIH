@@ -54,6 +54,23 @@ def get_current_user(
     return user
 
 
+def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """
+    Authenticate request via JWT Bearer token if provided and valid.
+    Returns None if missing or invalid without raising 401.
+    """
+    if not credentials or not credentials.credentials:
+        return None
+    payload = decode_access_token(credentials.credentials)
+    if not payload or "sub" not in payload:
+        return None
+    user_id = payload.get("sub")
+    return db.query(User).filter_by(id=user_id, is_active=True).first()
+
+
 def require_role(allowed_roles: List[str]):
     """
     Factory creating a dependency that enforces RBAC roles.

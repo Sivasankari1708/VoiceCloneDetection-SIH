@@ -2,7 +2,97 @@
 #  VoiceCloneDetection-SIH  —  .gitignore
 # ──────────────────────────────────────────────
 
-# Python
+# ==========================================
+# Confidential, Secrets & Credentials (NEVER COMMIT)
+# ==========================================
+# Environment variables & secrets
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+*.local
+
+# Credentials & API Keys
+credentials.json
+*credentials*.json
+client_secret*.json
+service_account*.json
+*secret*.json
+*secrets*.yaml
+*secrets*.yml
+*secrets*.toml
+token.json
+*.token
+tokens/
+.auth/
+.tokens/
+session_cache/
+
+# Private Keys & Certificates
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+*.pkcs12
+*.keystore
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# ==========================================
+# Databases, Storage & Local State (NEVER COMMIT)
+# ==========================================
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+voice_clone_detection.db
+platform.db
+*.rdb
+*.sql.gz
+
+# Local datasets - never commit
+/data/
+data/
+datasets/
+raw_data/
+processed_data/
+
+# ==========================================
+# Node.js & Frontend Dependencies / Builds
+# ==========================================
+node_modules/
+*/node_modules/
+**/node_modules/
+.npm
+.yarn/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Frontend Build Outputs & Caches
+dist/
+*/dist/
+**/dist/
+dist-ssr/
+*/dist-ssr/
+build/
+*/build/
+.vite/
+*/.vite/
+**/cache/
+
+# ==========================================
+# Python & Virtual Environments
+# ==========================================
 __pycache__/
 *.py[cod]
 *.pyo
@@ -10,8 +100,6 @@ __pycache__/
 .Python
 *.egg
 *.egg-info/
-dist/
-build/
 eggs/
 parts/
 var/
@@ -19,42 +107,31 @@ sdist/
 wheels/
 *.spec
 
-# Virtual environments
 .venv/
 venv/
 env/
 ENV/
-.env
 
-# Environment variables
-.env.local
-.env.*.local
-
-# Pytest / coverage
+# ==========================================
+# Pytest, Coverage & Profiling
+# ==========================================
 .pytest_cache/
 .coverage
 htmlcov/
 *.xml
+*.prof
+.mypy_cache/
+.ruff_cache/
 
-# Jupyter
+# ==========================================
+# Jupyter Notebooks
+# ==========================================
 .ipynb_checkpoints/
 *.ipynb
 
-# MyPy
-.mypy_cache/
-
-# IDEs
-.idea/
-.vscode/
-*.sublime-project
-*.sublime-workspace
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
+# ==========================================
 # Model weights / large binaries (download at runtime)
+# ==========================================
 *.pt
 !checkpoints/deepfake_v2_asvspoof2019_la.pt
 *.pth
@@ -65,25 +142,44 @@ htmlcov/
 *.safetensors
 pretrained_models/
 
-# HuggingFace cache (use HF_HOME env var to redirect)
-# Uncomment if you put the cache inside the repo:
-# .cache/
-
+# ==========================================
 # Audio samples — keep synthetic test fixtures, ignore large real recordings
-# To ignore ALL audio: uncomment the lines below
-# samples/genuine/*.wav
-# samples/cloned/*.wav
-# samples/imposter/*.wav
-# Large real recording exclusions (>10 MB) — add specific filenames as needed:
+# ==========================================
+# recordings/
+# uploads/
+# voice_samples/
 
-# Logs
+# ==========================================
+# Logs & Process IDs
+# ==========================================
 *.log
 logs/
+*.pid
+*.seed
+*.pid.lock
 
-# Temp / scratch
+# ==========================================
+# Temp, Scratch & Cache
+# ==========================================
 tmp/
 temp/
 scratch/
+.cache/
 
-# Local datasets - never commit
-/data/
+# ==========================================
+# OS & IDE Files
+# ==========================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+desktop.ini
+
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~

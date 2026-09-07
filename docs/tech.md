@@ -1,0 +1,742 @@
+# VoiceShield: Team Leader Master Technical Guide
+## Autonomous Voice-Clone Detection, Biometric Identity Verification, and Enterprise SOC Defense Platform
+
+**Document Purpose**: Definitive technical reference for understanding, defending, presenting, and debugging the complete VoiceShield platform for the Smart India Hackathon 2026.  
+**Target Audience**: Team Leader & Technical Presenter.  
+**Repository State**: Verified against current production codebase.  
+**Version**: 2.4.0 (Synchronous Two-Person Dynamic Call Architecture)
+
+---
+
+## Table of Contents
+
+1. [Project Overview](#part-1--project-overview)
+2. [System Evolution & Engineering History](#part-2--how-the-system-evolved)
+3. [Complete System Architecture](#part-3--complete-system-architecture)
+4. [Member 1: AI Intelligence & Acoustic Processing](#part-4--member-1-ai-intelligence-layer)
+5. [Member 2: Backend Platform & Security Orchestration](#part-5--member-2-backend-platform--security-orchestration)
+6. [Database: Complete Relational Architecture & Persistence](#part-6--database-complete-deep-dive)
+7. [Authentication, JWT, & Role-Based Access Control (RBAC)](#part-7--authentication-jwt-rbac)
+8. [Multi-Tenant Security Architecture](#part-8--multi-tenant-security)
+9. [User Frontend (Member 3)](#part-9--user-frontend)
+10. [Attacker Console & Injection Terminal](#part-10--attacker-console)
+11. [Enterprise SOC Frontend (Member 4)](#part-11--soc-frontend)
+12. [Contextual & Social Engineering Analysis](#part-12--contextual--social-engineering-analysis)
+13. [Real-Time Data Flow & Event Sequences](#part-13--real-time-data-flow)
+14. [Database Data Flow](#part-14--database-data-flow)
+15. [Security Architecture & Defensive Controls](#part-15--security-architecture)
+16. [Privacy Architecture & Biometric Data Governance](#part-16--privacy-architecture)
+17. [Deployment Architecture](#part-17--deployment-architecture)
+18. [Scalability & Performance Engineering](#part-18--scalability)
+19. [Failure Modes & Resiliency Engineering](#part-19--failure-modes)
+20. [Testing, Validation, & Verification Suite](#part-20--testing--validation)
+21. [Current Implementation vs. Future Roadmap](#part-21--current-implementation-vs-future-product)
+22. [Hackathon Judge Defense: Comprehensive Q&A Bank](#part-22--hackathon-judge-questions)
+23. [Technical Trap & Deep Viva Questions](#part-23--tricky-questions)
+24. [File-by-File Implementation Directory](#part-24--file-by-file-implementation-map)
+25. [API & WebSocket Master Reference](#part-25--api-master-reference)
+26. [Database Master Reference & Entity Schemas](#part-26--database-master-reference)
+27. [Canonical Attack Walkthrough: End-to-End Forensic Trace](#part-27--complete-call-trace)
+28. [Team Division of Responsibility & Interface Contracts](#part-28--team-responsibility-map)
+29. [Team Leader Master Cheat Sheet](#part-29--team-leader-cheat-sheet)
+
+---
+
+# Part 1 — Project Overview
+
+### What is VoiceShield?
+VoiceShield is a real-time, multi-modal voice security and fraud prevention platform engineered to defend individuals and enterprises against weaponized voice-cloning attacks, AI-synthesized deepfakes, and executive impersonation fraud.
+
+### The Exact Problem VoiceShield Solves
+Generative AI and diffusion-based neural vocoders (e.g., ElevenLabs, VALL-E, XTTS, StyleTTS) have eliminated the technical barrier to voice cloning. An adversary can clone a person's voice using fewer than three seconds of reference audio extracted from a public interview, YouTube clip, or social media post. 
+
+When weaponized, these voice clones are utilized in:
+1. **Executive Impersonation (CEO/CFO Fraud)**: Threat actors call regional finance officers or external contractors, claiming to be an executive demanding emergency wire transfers.
+2. **Citizen Social Engineering**: Attackers call common citizens claiming to be police, bank officials, or family members in distress, demanding immediate OTP disclosure or payment.
+3. **Telephony Trust Exploitation**: Traditional telecommunications protocols (PSTN, SIP) permit caller ID spoofing with trivial SIP header modifications (`From: "CFO" <+91-98200-11223>`).
+
+### Why Traditional Caller Verification Fails
+- **Caller ID Spoofing**: Caller ID is an unauthenticated presentation layer string in SIP packets; it provides zero cryptographic proof of caller identity.
+- **SMS Two-Factor Authentication (2FA)**: Attackers on a live call use urgency, authority, and emotional pressure to coerce the victim into reading the SMS OTP out loud in real time.
+- **Human Auditory Perception**: Modern neural vocoders replicate vocal timbre, cadence, pitch contour, and micro-prosody beyond the human ear's ability to discriminate.
+
+### Conceptual Paradigm Shift: Dissecting the Defense Stack
+
+| Dimension | Scope | What It Answers | Why It Alone Fails |
+| :--- | :--- | :--- | :--- |
+| **Voice Deepfake Detection** | Acoustic Spectral Analysis | *Is this voice signal generated by an artificial neural vocoder?* | A clean audio sample might be a human imposter (non-synthetic), or a low-quality cellular codec can trigger false alarms. |
+| **Speaker Verification** | Biometric Embedding Matching | *Does this voice match the enrolled acoustic profile of the claimed individual?* | An AI clone replicates the speaker's vocal traits; high similarity alone does NOT prove authenticity. |
+| **Caller Identity** | Claim Assertion | *Who does the caller claim to be?* | Anyone can claim to be the CFO; claims without biometric verification are meaningless. |
+| **Intent Detection** | NLP Semantics | *What conversational objective is the caller attempting to achieve?* | A legitimate CFO may ask for reports; intent must be contextualized with identity and synthetic likelihood. |
+| **Social Engineering Analysis** | Behavioral Heuristics | *Is the caller exerting artificial urgency, authority, secrecy, or coercive pressure?* | Legitimate business emergencies exist; urgency alone is not proof of fraud. |
+| **Risk Scoring** | Multi-Factor Synthesis | *What is the composite probability of compromise given all acoustic, biometric, and conversational signals?* | Numbers without operational policy do not protect users. |
+| **Security Policy** | Rule Execution | *What specific defensive action (WARN, MONITOR, BLOCK, ESCALATE) must trigger?* | Actions without real-time dispatch leave victims unprotected during the attack. |
+| **Incident Response** | Forensic Governance | *How do security teams document, triage, neutralize, and audit the attack across the enterprise?* | Without SOC notification, enterprise security teams remain blind to active ongoing impersonations. |
+
+### The Core VoiceShield Axioms
+> **"From 'Is this voice fake?' to 'Can I trust this caller and their request?'"**  
+> **"Don't just detect the fake voice. Detect the attack."**
+
+VoiceShield does not treat deepfake detection as an isolated binary classifier. It operates as an end-to-end security fabric: capturing raw streaming audio, extracting acoustic anomalies, comparing speaker embeddings against enrolled biometric profiles, transcribing speech via ASR, classifying conversational intent, synthesizing an authoritative risk score, warning the target citizen, and dispatching multi-tenant telemetry to the victimized organization's Security Operations Center (SOC).
+
+```
+   Adversary / Caller (Browser Mic / Injected Waveform)
+                          │
+                          ▼
+            FastAPI Ingestion & WebSockets
+                          │
+                          ▼
+             AI Intelligence Layer (Member 1)
+     ┌────────────────────┼────────────────────┐
+     ▼                    ▼                    ▼
+Silero VAD         Deepfake CNN v2       ECAPA-TDNN (192-D)
+(Speech Gating)    (80-bin Log-Mel)      (Biometric Verification)
+     │                    │                    │
+     └────────────────────┼────────────────────┘
+                          ▼
+        Faster-Whisper ASR & Intent Detector
+                          │
+                          ▼
+          Risk Engine & Temporal Smoothing (EMA)
+                          │
+                          ▼
+       Security Orchestrator & Policy Engine (Member 2)
+                          │
+        ┌─────────────────┴─────────────────┐
+        ▼                                   ▼
+Citizen Dashboard (Member 3)     Enterprise SOC Console (Member 4)
+  - Incoming Call Ringing           - Real-Time Alert Feed
+  - User Warning Banner             - Forensic Incident Triage
+  - Real-Time Risk Gauge            - Tenant Isolation (Apex vs. Kavach)
+```
+
+---
+
+# Part 2 — How the System Evolved
+
+### 1. Member 1 Initial State (Standalone ML Pipelines)
+Member 1 built the core machine learning inference components in Python:
+- **Silero VAD** for silence filtering.
+- **Deepfake CNN v2** trained on ASVspoof 2019 LA extracting Log-Mel spectrograms.
+- **SpeechBrain ECAPA-TDNN** extracting 192-dimensional embeddings for speaker verification.
+- **Faster-Whisper** for ASR transcription and regex-based intent detection.
+- **RiskEngine** calculating a composite score.
+
+*Limitation*: It operated purely on static files or local test loops. There was no client-server networking, no persistent database, no multi-user session management, and no user interface.
+
+### 2. Member 2 Additions (Platform, Persistence & Orchestration)
+Member 2 engineered the enterprise backend:
+- Built **FastAPI** REST and WebSocket endpoints.
+- Designed a 10-table relational schema using **SQLAlchemy** supporting PostgreSQL with an automatic SQLite fallback.
+- Implemented **JWT authentication** and Role-Based Access Control (`USER`, `CALLER`, `SECURITY_OPERATOR`, `ADMIN`).
+- Created the **SecurityOrchestrator**, **PolicyEngine**, and **AlertDispatcher** managing multi-tenant alerting and incident lifecycles.
+
+### 3. Frontend Initial State & The "Shared Prototype" Flaw
+Members 3 and 4 developed React frontends:
+- `user_frontend`: A dashboard demonstrating citizen protection.
+- `soc_frontend`: An operations console for monitoring incidents.
+
+*The Architectural Flaw*:  
+Initially, `user_frontend` was built as a single-system demonstration. A local simulator injected an audio file, and the incoming call modal appeared within the same session. When testers opened the app on two laptops to simulate a real call:
+1. Both laptops logged in as the same user.
+2. When Laptop A initiated a call, Laptop A received its own incoming call prompt.
+3. Accepting the call on Laptop B terminated the session on Laptop A.
+4. There was no real caller-recipient separation.
+
+### 4. The Two-Person Architecture Refactoring
+To achieve true hackathon-grade reality across two physical machines:
+- **Laptop A (Attacker Console)**: Authenticates as `attacker@demo.com` with role `CALLER`. Dedicated UI at `/attacker`. Selects target recipient and audio scenario (Genuine, AI-Cloned, Human Imposter, or Live Mic).
+- **Laptop B (Sreya - Protected Citizen)**: Authenticates as `sreya@demo.com` with role `USER`. Dedicated UI at `/home`. Receives incoming calls, accepts, and enters `/live` protection mode.
+- **Enterprise SOC (Apex Financial Corp)**: Authenticates as `operator` with role `SECURITY_OPERATOR`. Dedicated UI on port 3000. Receives organization-level alerts.
+
+#### Critical Tenant Hierarchy Rule
+> **Sreya is an independent citizen with `org_id = None`. Sreya is NOT an employee of Apex Financial Corp.**  
+> The caller claims to be *Rajesh Malhotra, CFO of Apex Financial Corp*. Therefore, Apex Financial Corp is the organization being impersonated, making its SOC the security destination for the impersonation event. Sreya receives the user safety warning. Unrelated organizations (e.g., Kavach Cyber Defense) receive zero alerts.
+
+### 5. The Call State Machine & Acceptance-to-Hangup Bug
+
+```
+     Adversary POST /api/calls/start
+                    │
+                    ▼
+               [ RINGING ] ──────► User WebSocket (/ws/user/{sreya_id}): INCOMING_CALL
+                    │
+                    │ Sreya POST /api/calls/{session_id}/accept
+                    ▼
+               [ ACTIVE ]  ◄───── Broadcast CALL_ACCEPTED across Stream & User sockets
+                    │
+                    │ Audio Stream Active / Real-time ML Pipeline
+                    ▼
+               [ ENDED ]   ◄───── POST /api/calls/{session_id}/end (CALLER_HANGUP / USER_HANGUP)
+```
+
+#### The Acceptance-to-Hangup Bug Postmortem
+- **Symptom**: When Sreya clicked [Accept], the call modal closed, but within 500ms the call automatically terminated and transitioned to `ENDED`.
+- **Root Cause**: In `webSocketLiveCallStream.ts`, the `stop()` method unconditionally issued an HTTP POST to `/api/calls/{session_id}/end` with `reason: 'NORMAL_HANGUP'`. In React 18, StrictMode mounts, unmounts, and remounts components in development mode. Additionally, navigating from `/home` to `/live` unmounted the background call listener. This component unmount triggered `stop()`, which told the backend server to permanently terminate the call session before streaming ever began!
+- **The Fix**:
+  1. Decoupled local WebAudio/WebSocket resource teardown (`stop(terminateBackendSession = false)`) from intentional user hangup (`terminate(reason)`).
+  2. Component unmounting now cleans up local sockets without touching the server session.
+  3. Added `waitForAcceptance: true` so the attacker console delays audio streaming until the backend broadcasts `CALL_ACCEPTED`.
+
+---
+
+# Part 3 — Complete System Architecture
+
+```
+Layer 1:  Browser Client Layer       (React 18, Vite, TypeScript, WebAudio API, PCM Resampler)
+Layer 2:  FastAPI Routing Layer      (Uvicorn ASGI, Route Handlers, CORS Middleware)
+Layer 3:  Authentication & RBAC      (JWT, bcrypt, Claims: USER | CALLER | SECURITY_OPERATOR)
+Layer 4:  WebSocket Ingestion Layer  (/ws/stream/{id}, /ws/user/{id}, /ws/org/{id}/alerts)
+Layer 5:  Audio Decoding Layer       (FFmpeg Subprocess Pipe, Soundfile Fallback, 16kHz float32)
+Layer 6:  VAD Gating Layer           (Silero VAD, 512-sample frames, speech threshold 0.50)
+Layer 7:  Deepfake Detection Layer   (Log-Mel Spectrogram, DeepfakeCNN v2, ASVspoof 2019)
+Layer 8:  Biometric Verifier Layer   (SpeechBrain ECAPA-TDNN, 192-D Cosine Embedding, 0.70 Threshold)
+Layer 9:  ASR & Intent Layer         (faster-whisper int8 CPU, Regex Conversational Intent Engine)
+Layer 10: Multi-Factor Risk Engine   (Acoustic + Biometric + Contextual Synthesis, EMA Smoothing)
+Layer 11: Security Orchestrator      (Cross-Layer State Coordination, Session Deduplication)
+Layer 12: Policy Evaluation Layer    (ALLOW, MONITOR, WARN, REQUIRE_ADDITIONAL_VERIFICATION, BLOCK)
+Layer 13: Alert Dispatcher Layer     (Isolated Pub/Sub Sockets: Call, User, Tenant SOC)
+Layer 14: Incident Management Layer  (Deduplicated SecurityIncidents, State Transitions)
+Layer 15: Operator Action Layer      (CONFIRM_ATTACK, FALSE_POSITIVE, ESCALATE, RESOLVE)
+Layer 16: Audit Logging Layer        (Immutable Compliance Audit Trail in DB)
+Layer 17: Persistence Layer          (PostgreSQL / SQLite Fallback, SQLAlchemy ORM)
+```
+
+---
+
+# Part 4 — Member 1: AI Intelligence Layer
+
+```
+[Raw Audio Chunks] (PCM / WAV / Bytes)
+         │
+         ▼
+[Preprocessing & Validation] ──► 16,000 Hz, 1-D Mono, Float32, Peak Normalized
+         │
+         ▼
+[Silero VAD Gating] ───────────► Silence? ──► Early Exit (0.05 RTF)
+         │ Speech Detected
+         ▼
+ ┌───────┴─────────────────────────────────────────────┐
+ │ Parallel / Sequential Feature Extraction            │
+ ▼                                                     ▼
+[Log-Mel Extraction] (80 bins)        [ECAPA-TDNN Biometric Extraction]
+ │                                                     │
+ ▼                                                     ▼
+[DeepfakeCNN v2 Inference]            [Cosine Similarity vs. Enrolled Profile]
+ (Synthetic Probability: 0.0 - 1.0)    (Similarity: -1.0 to +1.0)
+ │                                                     │
+ └───────────────────────┬─────────────────────────────┘
+                         ▼
+        [Faster-Whisper ASR Speech-to-Text]
+         (Transcript Generation: int8 quantized)
+                         │
+                         ▼
+        [Rule-Based Intent Detection Engine]
+         (OTP_REQUEST, PAYMENT_TRANSFER, URGENT, etc.)
+                         │
+                         ▼
+        [Multi-Factor Risk Scoring Engine]
+         (Acoustic + Biometric + Intent + EMA Smoothing)
+```
+
+### A. Audio Ingestion & Normalization (`backend/audio/decoder.py` & `preprocessing.py`)
+- **Supported Formats**: WAV, WebM, Opus, Ogg, MP3, FLAC.
+- **Decoding Mechanism**: Subprocess pipe to FFmpeg outputting raw `f32le` (float32 little-endian) PCM stream.
+- **Fallback**: Python `soundfile` library for plain WAV files if FFmpeg binary is absent.
+- **The 16 kHz Invariant**: Human speech formants critical for phonetic discrimination ($F_1$ to $F_4$) lie below 4 kHz, with fricative energy extending up to 8 kHz. Under the Nyquist-Shannon sampling theorem, a sampling rate of 16 kHz captures up to the 8 kHz Nyquist limit, eliminating aliasing while avoiding the computational overhead of 44.1/48 kHz.
+- **Mono Invariant**: Cellular and VoIP channels are mono. Multi-channel audio is averaged: $x_{\text{mono}} = \frac{1}{C}\sum_{c=1}^C x_c$.
+- **Peak Normalization**: $x_{\text{norm}} = \frac{x}{\max(|x|) + \epsilon}$, bounded to $[-1.0, +1.0]$. Clips with amplitude below $10^{-7}$ are treated as absolute silence.
+
+### B. Voice Activity Detection (`backend/audio/vad.py`)
+- **Model**: Silero VAD (v5/v6 ONNX/JIT model).
+- **Parameters**: 512 samples per frame (32 ms at 16 kHz), `threshold=0.50`, `min_speech_duration_ms=250`, `min_silence_duration_ms=100`.
+- **Purpose**: Silence and non-speech background noise contain zero vocoder artifacts or speaker traits. Passing silence through a deepfake CNN produces unstable predictions. VAD gates downstream execution, saving ~85% of inference compute during pauses.
+
+### C. Deepfake Voice Detection (`backend/models/deepfake_v2/`)
+- **Input Representation**: 80-bin Log-Mel Spectrogram extracted using STFT with 25 ms window (400 samples), 10 ms hop (160 samples), FFT size 400, frequency range 20 Hz – 8,000 Hz, with dynamic log compression $\log(S + 10^{-6})$ and per-spectrogram z-score normalization.
+- **Model Architecture (`DeepfakeCNN`)**:
+  - `Block 1`: Conv2D(1 -> 32, 3x3) -> BatchNorm -> ReLU -> MaxPool2D(2x2)
+  - `Block 2`: Conv2D(32 -> 64, 3x3) -> BatchNorm -> ReLU -> MaxPool2D(2x2)
+  - `Block 3`: Conv2D(64 -> 128, 3x3) -> BatchNorm -> ReLU -> MaxPool2D(2x2)
+  - `Block 4`: Conv2D(128 -> 256, 3x3) -> BatchNorm -> ReLU -> MaxPool2D(2x2)
+  - `Global Pooling`: `AdaptiveAvgPool2d((1, 1))` providing time-invariance.
+  - `Classification Head`: Linear(256 -> 512) -> ReLU -> Dropout(0.3) -> Linear(512 -> 128) -> ReLU -> Dropout(0.3) -> Linear(128 -> 2).
+- **Training Foundation**: Trained on ASVspoof 2019 Logical Access (LA) dataset covering 19 vocoder/TTS/VC algorithms. The model learns high-frequency harmonic phase inconsistencies, unnatural spectral flux, and lack of micro-tremor typical of neural vocoder synthesis.
+- **Output**: 2 logits converted via Softmax to $[P(\text{bonafide}), P(\text{spoof})]$.
+
+### D. Speaker Verification (`backend/models/speaker_verifier.py`)
+- **Architecture**: ECAPA-TDNN (`speechbrain/spkrec-ecapa-voxceleb`) trained on VoxCeleb 1 & 2 (~7,000 speakers).
+- **Embeddings**: Extracts a 192-dimensional vector. The raw vector (norm ~414) is L2-normalized to unit sphere length ($||\mathbf{e}||_2 = 1.0$).
+- **Comparison Metric**: Cosine similarity $\cos(\theta) = \mathbf{e}_{\text{test}} \cdot \mathbf{e}_{\text{ref}}$.
+- **Empirical Calibration**:
+  - Same speaker cosine similarity: $0.87 - 0.90$.
+  - Different speaker cosine similarity: $0.20 - 0.25$.
+  - Threshold: $0.70$ (separation gap ~0.66).
+- **The Unknown Speaker Axiom**: If an incoming caller does NOT claim an enrolled identity, speaker verification evaluates to `NOT_AVAILABLE`. An un-enrolled citizen is never flagged as an imposter simply because their voice is not in the executive database.
+
+### E. Speech Recognition (`backend/models/whisper_asr.py`)
+- **Engine**: `faster-whisper` (CTranslate2 execution engine) running the Whisper `base` or `tiny` model in `int8` quantization on CPU.
+- **Language**: Default English (`en`) optimized for Indian-English cadence and accent variations.
+- **Optimization**: Model is loaded once at server initialization and cached in memory.
+
+### F. Conversational Intent Engine (`backend/intent/intent_detector.py`)
+Rule-based regex engine classifying transcripts into prioritized categories:
+1. `OTP_REQUEST` (Weight: 40.0): `"one time password"`, `"otp"`, `"verification code"`.
+2. `CREDENTIAL_REQUEST` (Weight: 40.0): `"password"`, `"pin"`, `"cvv"`, `"login details"`.
+3. `PAYMENT_TRANSFER` (Weight: 30.0): `"wire transfer"`, `"rtgs"`, `"neft"`, `"send money"`, `"urgent payment"`.
+4. `URGENT_REQUEST` (Weight: 20.0): `"immediately"`, `"right now"`, `"emergency"`, `"don't tell anyone"`.
+5. `NORMAL_CONVERSATION` (Weight: 0.0): Standard operational discourse.
+
+### G. Composite Risk Engine & Temporal Smoothing (`backend/pipeline/risk_engine.py` & `streaming_pipeline.py`)
+
+$$\text{Risk Score} = \min(100.0, \, S_{\text{synthetic}} + P_{\text{clone}} + P_{\text{mismatch}} + I_{\text{intent}})$$
+
+Where:
+- $S_{\text{synthetic}} = P(\text{spoof}) \times 50.0$
+- $P_{\text{clone}} = 25.0$ if $P(\text{spoof}) \ge 0.50$ AND $\text{Similarity} \ge 0.70$ (Voice Clone Impersonating Enrolled VIP)
+- $P_{\text{mismatch}} = 50.0$ if $\text{Claimed Profile Present}$ AND $\text{Similarity} < 0.50$ (Human Imposter)
+- $I_{\text{intent}} = \text{Intent Weight}$ (up to 40.0)
+
+#### Temporal Exponential Moving Average (EMA)
+To prevent a single transient audio glitch from triggering a false panic, probabilities are smoothed over a rolling buffer:
+
+$$\bar{P}_t = \alpha \cdot P_t + (1 - \alpha) \cdot \bar{P}_{t-1}, \quad \text{with } \alpha = 0.4$$
+
+**Fast-Alert Override**: If raw $P(\text{spoof}) \ge 0.85$, the EMA smoothing lag is bypassed, and an immediate alert triggers.
+
+---
+
+# Part 5 — Member 2: Backend Platform & Security Orchestration
+
+### Why FastAPI?
+- **Asynchronous Concurrency**: Natively supports Python `asyncio`, crucial for handling dozens of concurrent WebSocket audio streams.
+- **Zero-IPC Model Serving**: Ingests audio, runs PyTorch inference, queries database, and dispatches WebSockets in the same process memory, avoiding Redis/IPC latency.
+- **Automatic OpenAPI Documentation**: Generates interactive Swagger documentation at `/docs`.
+
+### REST API Architecture (`backend/platform/server/routes/`)
+- `/api/auth/login`: Authenticates users and issues signed JWTs.
+- `/api/auth/users`: Lists discoverable platform users.
+- `/api/calls/start`: Initiates a call session, setting status to `RINGING` if a recipient is targeted.
+- `/api/calls/{session_id}/accept`: Recipient accepts call; status transitions to `ACTIVE`; broadcasts `CALL_ACCEPTED`.
+- `/api/calls/{session_id}/end`: Terminates session; persists final metrics; logs audit event.
+- `/api/incidents`: Queries security incidents scoped by tenant `org_id`.
+- `/api/incidents/{id}/action`: Executes operator actions (`CONFIRM_ATTACK`, `RESOLVE`, etc.).
+- `/api/protected-identities`: Manages VIP biometric enrollment profiles.
+
+### Security Orchestrator (`backend/platform/services/orchestrator.py`)
+Coordinates the entire security lifecycle per chunk:
+1. Ingests raw PCM chunk from WebSocket.
+2. Hands chunk to `AIAdapter` (wrapping Member 1's `StreamingAudioPipeline`).
+3. Receives `ProcessedChunkTelemetry`.
+4. Evaluates `PolicyEngine`.
+5. Persists per-chunk `RiskEvent` in DB.
+6. If risk $\ge 65$ (`HIGH` or `CRITICAL`):
+   - Deduplicates or creates `SecurityIncident`.
+   - Dispatches `USER_SECURITY_ALERT` to call WebSocket.
+   - Dispatches `ORGANIZATION_SECURITY_ALERT` to claimed organization's SOC WebSocket.
+7. Logs events in immutable `AuditLog`.
+
+---
+
+# Part 6 — Database: Complete Relational Architecture
+
+### Why Relational Storage?
+VoiceShield is an enterprise security system requiring strict referential integrity, multi-tenant boundary enforcement, and financial-grade auditability. An incident must link immutably to a call session, a tenant organization, and specific forensic chunks.
+
+```
+┌──────────────────┐       ┌────────────────────────┐
+│  organizations   │◄──────┤         users          │
+└────────┬─────────┘       └───────────┬────────────┘
+         │                             │
+         ├─────────────────────────────┼────────────────────────┐
+         │                             │                        │
+         ▼                             ▼                        ▼
+┌──────────────────┐       ┌────────────────────────┐  ┌──────────────────┐
+│protected_identities│     │     call_sessions      │  │    audit_logs    │
+└────────┬─────────┘       └───────────┬────────────┘  └──────────────────┘
+         │                             │
+         ▼                             ├────────────────────────┐
+┌──────────────────┐                   ▼                        ▼
+│ speaker_profiles │       ┌────────────────────────┐  ┌──────────────────┐
+└──────────────────┘       │      risk_events       │  │security_incidents│
+                           └────────────────────────┘  └────────┬─────────┘
+                                                                │
+                                                                ▼
+                                                       ┌──────────────────┐
+                                                       │ security_actions │
+                                                       └──────────────────┘
+```
+
+### PostgreSQL vs. SQLite Fallback Logic
+- **Primary Production Engine**: PostgreSQL (connection string via `DATABASE_URL`).
+- **Zero-Dependency Fallback**: In `backend/platform/config.py`, if `DATABASE_URL` is unset or PostgreSQL is unreachable, the platform falls back to `sqlite:///./voice_clone_detection.db`.
+- **Honest Engineering Note**: SQLite fallback is a developer convenience for offline testing and hackathon portability. It is **NOT** a production high-availability failover mechanism.
+
+### The 10 Core Relational Tables
+1. `organizations`: Tenants (e.g., Apex Financial Corp, Kavach Cyber Defense).
+2. `users`: Citizen users, callers, and SOC operators.
+3. `protected_identities`: Enrolled VIP executives (e.g., Rajesh Malhotra, CFO).
+4. `speaker_profiles`: Biometric 192-D numerical embeddings (raw audio is NEVER stored).
+5. `call_sessions`: Active and historical call records with live risk scores.
+6. `risk_events`: Per-second forensic telemetry snapshots (speech, synthetic prob, similarity, intent).
+7. `security_incidents`: High/Critical severity security tickets assigned to SOC operators.
+8. `security_actions`: Incident response actions (`CONFIRM_ATTACK`, `DISMISS`, etc.).
+9. `audit_logs`: Append-only compliance log of all system security events.
+10. `security_policies`: Organization-specific threshold configurations.
+
+---
+
+# Part 7 — Authentication, JWT, & RBAC
+
+### Tokens & Claims
+- **Signature**: HMAC-SHA256 (`HS256`).
+- **Token Claims**:
+  - `sub`: User ID (`user_sreya_001`, `user_attacker_001`).
+  - `username`: Username handle.
+  - `email`: User email address.
+  - `role`: Role string (`USER`, `CALLER`, `SECURITY_OPERATOR`, `ADMIN`).
+  - `org_id`: Tenant ID or `null`.
+  - `exp`: Expiration timestamp (8 hours default).
+
+### Seeded Demonstration Personas
+
+| Role | Username / Email | Password | `org_id` | Persona Responsibility |
+| :--- | :--- | :--- | :--- | :--- |
+| `CALLER` | `attacker@demo.com` | `attacker123` | `None` | Laptop A: Launches voice clone injection attacks. |
+| `USER` | `sreya@demo.com` | `sreya123` | `None` | Laptop B: Independent citizen under VoiceShield protection. |
+| `SECURITY_OPERATOR` | `operator` | `operator123` | `org_demo_001` | Apex Financial Corp SOC: Receives impersonation alerts. |
+| `SECURITY_OPERATOR` | `operator_b` | `operator123` | `org_cyber_002` | Kavach Cyber Defense SOC: Unrelated tenant (zero alerts). |
+
+---
+
+# Part 8 — Multi-Tenant Security
+
+### Tenant Isolation Enforcement
+1. **Database Queries**: All incident and call lookups in `incidents.py` filter strictly by `org_id == current_user.org_id`.
+2. **WebSocket Dispatching**: `AlertDispatcher._org_sockets` maintains isolated connection sets keyed by `org_id`.
+3. **The Multi-Tenant Proof**: When Attacker calls Sreya impersonating Rajesh Malhotra (CFO, Apex Financial Corp):
+   - Apex SOC (`org_demo_001`) receives `ORGANIZATION_SECURITY_ALERT`.
+   - Kavach SOC (`org_cyber_002`) receives **0 alerts**.
+
+---
+
+# Part 9 — User Frontend (Member 3)
+
+- **Framework**: React 18 with TypeScript, built with Vite and Tailwind CSS.
+- **Route Guards**:
+  - `RequireCitizenUser`: Protects `/home`, `/live`, `/history`. Automatically redirects users with role `CALLER` to `/attacker`.
+  - `RequireAttacker`: Protects `/attacker`. Automatically redirects role `USER` to `/home`.
+- **Dynamic Network Resolution (`config.ts`)**: Derives backend host dynamically from `window.location.hostname`. When accessing from Laptop B over LAN (`http://10.106.21.156:5173`), API calls route to `10.106.21.156:8000` automatically.
+- **Acceptance Flow**: `IncomingCallModal` sends `POST /api/calls/{session_id}/accept` before navigating to `/live`.
+
+---
+
+# Part 10 — Attacker Console
+
+Dedicated attack terminal available at `/attacker` for Laptop A:
+- **Preloaded Attack Scenarios**:
+  1. *AI-Cloned Executive*: Injects `tts_cloned_ava.wav` claiming CFO Rajesh Malhotra (`LA_0069`). Triggers CRITICAL risk (95/100).
+  2. *Genuine Executive*: Injects `real_speech_tts.wav` matching enrolled biometric profile `LA_0069`. Triggers SAFE status (15/100).
+  3. *Human Imposter*: Injects `speaker_b_test.wav` claiming `LA_0069`. Triggers SPEAKER MISMATCH alert (75/100).
+  4. *Live Microphone*: Streams real-time mic input resampled to 16 kHz PCM.
+- **Lifecycle Control**: Shows `RINGING` while waiting for Sreya to accept, switches to `ACTIVE` on `CALL_ACCEPTED`, and provides an explicit [END CALL] button.
+
+---
+
+# Part 11 — SOC Frontend (Member 4)
+
+Enterprise dashboard running on port 3000 for security operators:
+- **Real-Time Alert Feed**: Subscribes to `/ws/org/{org_id}/alerts`.
+- **Forensic Triage View**: Inspects synthetic probability, biometric similarity curve, Whisper transcript, and matched social engineering signals.
+- **Operator Action Dispatch**: Dispatches `CONFIRM_ATTACK`, `BLOCK_CALL`, `FALSE_POSITIVE`, or `RESOLVE` back to the server.
+- **Authoritative Score Display**: Directly renders backend-calculated risk scores; the frontend never calculates mock scores.
+
+---
+
+# Part 12 — Contextual & Social Engineering Analysis
+
+VoiceShield evaluates the intersection of identity claims and conversational semantics:
+
+| Caller Claim | Voice Synthesis | Intent Detected | Risk Score | Decision & Policy Action |
+| :--- | :--- | :--- | :--- | :--- |
+| Enrolled CFO (`LA_0069`) | Synthetic ($P > 0.85$) | Urgent Wire Transfer | **95 (CRITICAL)** | Block call & alert Apex SOC immediately. |
+| Enrolled CFO (`LA_0069`) | Natural ($P < 0.10$) | Normal Discussion | **12 (SAFE)** | Allow call; biometric match verified. |
+| Enrolled CFO (`LA_0069`) | Natural ($P < 0.10$) | Asking for Banking Password | **65 (HIGH)** | Warn user; policy violation despite voice match. |
+| Unknown Stranger | Natural ($P < 0.10$) | Normal Conversation | **15 (SAFE)** | Allow; un-enrolled citizen is not an imposter. |
+| Unknown Stranger | Synthetic ($P > 0.85$) | General Chat | **70 (HIGH)** | Warn user of synthetic voice presence. |
+
+---
+
+# Part 13 — Real-Time Data Flow
+
+```
+Attacker (Laptop A)            Backend (FastAPI)              Sreya (Laptop B)            Apex SOC
+      │                               │                              │                       │
+      │── POST /api/calls/start ─────►│                              │                       │
+      │   (Claims CFO Rajesh Malhotra)│                              │                       │
+      │                               │── WS INCOMING_CALL ─────────►│                       │
+      │   (Console displays RINGING)  │   (Modal Pops Up on Screen)  │                       │
+      │                               │                              │                       │
+      │                               │◄─ POST /api/calls/.../accept ┤                       │
+      │                               │   (Sreya Clicks Accept)      │                       │
+      │                               │                              │                       │
+      │◄── WS CALL_ACCEPTED ──────────┼── WS CALL_ACCEPTED ─────────►│                       │
+      │                               │                              │                       │
+      │── Binary Audio Chunks (1s) ──►│                              │                       │
+      │                               │── Silero VAD (Speech Check)  │                       │
+      │                               │── DeepfakeCNN (P_synth=0.92) │                       │
+      │                               │── ECAPA-TDNN (Sim=0.88)      │                       │
+      │                               │── Whisper ASR ("Wire money") │                       │
+      │                               │── Intent (PAYMENT_TRANSFER)  │                       │
+      │                               │── Risk Engine (Score=95)     │                       │
+      │                               │                              │                       │
+      │◄── WS RISK_UPDATE (95) ───────┼── WS RISK_UPDATE (95) ──────►│                       │
+      │                               │── WS USER_SECURITY_ALERT ───►│                       │
+      │                               │   (Red Threat Banner Shown)  │                       │
+      │                               │                                                      │
+      │                               │── WS ORGANIZATION_SECURITY_ALERT ───────────────────►│
+      │                               │   (Target: Sreya, Claimed: CFO Rajesh Malhotra)      │
+      │                               │                                                      │
+      │── POST /api/calls/.../end ───►│                                                      │
+      │◄── WS CALL_ENDED ─────────────┴── WS CALL_ENDED ────────────────────────────────────►│
+```
+
+---
+
+# Part 14 — Database Data Flow
+
+1. **Call Start**: Inserts `CallSession` row (`status="RINGING"`, `recipient_user_id="user_sreya_001"`).
+2. **Call Accept**: Updates `CallSession` (`status="ACTIVE"`).
+3. **Per-Chunk Streaming**: Inserts `RiskEvent` record with forensic scores and execution latencies.
+4. **Threshold Breach ($\ge 65$)**: Inserts or updates `SecurityIncident` row linked to `session_id`.
+5. **Operator Action**: Inserts `SecurityAction` row linked to incident.
+6. **Call Hangup**: Updates `CallSession` (`status="ENDED"`, `end_time=utcnow()`). Inserts `AuditLog` row.
+
+---
+
+# Part 15 — Security Architecture
+
+- **Transport Security**: Requires TLS/WSS in production environments.
+- **Input Validation**: Enforces audio chunk payload limits ($\le 4$ MB) and validates audio invariants in Python before feeding tensors to models.
+- **Biometric Protection**: Raw voice audio is strictly prohibited from database persistence. Only non-invertible mathematical embeddings are stored.
+- **Tenant Isolation**: Query-level tenancy filtering prevents cross-tenant data leakage.
+
+---
+
+# Part 16 — Privacy Architecture
+
+VoiceShield complies with biometric privacy frameworks (GDPR Article 9, India DPDP Act 2023):
+- **Data Minimization**: Voice audio is processed in volatile memory buffers and immediately discarded after feature extraction.
+- **Irreversibility**: ECAPA-TDNN speaker embeddings are 192-dimensional numerical projections; reconstructing original intelligible speech from an embedding alone is mathematically infeasible.
+
+---
+
+# Part 17 — Deployment Architecture
+
+### Hackathon Prototype Deployment
+- **FastAPI Backend**: Runs on Laptop A (`0.0.0.0:8000`).
+- **Laptop A (Attacker)**: Accesses `http://localhost:5173/attacker`.
+- **Laptop B (Sreya)**: Accesses `http://10.106.21.156:5173/home` over local Wi-Fi.
+- **Enterprise SOC**: Accesses `http://localhost:3000`.
+
+### Production Architecture
+- **Ingestion**: Global Anycast Load Balancers terminating TLS/WSS.
+- **API Cluster**: Horizontally autoscaled FastAPI container nodes.
+- **Inference Cluster**: Dedicated Triton or Ray Serve GPU inference workers running DeepfakeCNN, ECAPA-TDNN, and Whisper.
+- **Database**: Managed Multi-AZ PostgreSQL with read-replicas.
+- **Telephony**: SIP Trunking integration via FreeSWITCH or Kamailio media proxies.
+
+---
+
+# Part 18 — Scalability & Performance
+
+- **Current Real-Time Factor (RTF)**: Across Mac M-series CPUs, processing a 1-second audio chunk takes $\approx 110\text{ ms}$, yielding an $\text{RTF} \approx 0.11$ (significantly faster than real time).
+- **Primary Bottlenecks at Scale**:
+  1. *Whisper ASR*: Most compute-intensive component. At scale, offload to batched GPU inference workers.
+  2. *WebSocket Concurrency*: Scale FastAPI horizontally behind an NGINX reverse proxy with Redis pub/sub backplane.
+
+---
+
+# Part 19 — Failure Modes & Resiliency
+
+| Failure Scenario | Expected System Behavior | Current Prototype Handling | Production Enhancement |
+| :--- | :--- | :--- | :--- |
+| **Silence / Background Noise** | Early exit; do not compute deepfake/speaker traits. | Silero VAD detects no speech; returns default SAFE score. | Adaptive noise floor estimation. |
+| **Microphone Disconnect** | Stream gracefully halts without crashing server. | WebSocket sends close frame; orchestrator marks session ENDED. | Client auto-reconnect logic. |
+| **PostgreSQL Unavailable** | System continues operating locally. | Automatically falls back to local SQLite database. | Automated multi-AZ failover. |
+| **Corrupted Audio Frame** | Reject malformed frame; maintain call. | Catches decoding error; returns WebSocket `ERROR` event. | Discard corrupted RTP packet. |
+| **React Component Remount** | Do NOT terminate backend call session. | `stop(false)` only cleans up local audio context; session stays alive. | Redux/Zustand persistent global call state. |
+
+---
+
+# Part 20 — Testing & Validation
+
+### Automated Verification Suite
+- **Unit & Pipeline Tests**:
+  - `backend/tests/test_risk_engine.py` (11 tests passed)
+  - `backend/tests/test_whisper_asr.py` (17 tests passed)
+  - `backend/tests/test_streaming_pipeline.py` (10 tests passed)
+- **End-to-End Two-Person Live Call Flow (`scratch/test_attacker_sreya_accept_flow.py`)**:
+  - Validates Attacker (`CALLER`) and Sreya (`USER`, `org_id=None`) login.
+  - Confirms call initiation starts in `RINGING`.
+  - Confirms Sreya receives `INCOMING_CALL` event.
+  - Confirms call transitions to `ACTIVE` upon acceptance.
+  - Confirms Attacker audio streaming generates `USER_SECURITY_ALERT` (Risk: 95/100).
+  - Confirms Apex SOC receives `ORGANIZATION_SECURITY_ALERT`.
+  - Confirms Kavach SOC receives **0 alerts** (multi-tenant isolation verified).
+  - Confirms clean call termination.
+
+---
+
+# Part 21 — Current Implementation vs. Future Product
+
+| Capability | Current Hackathon Prototype | Enterprise Production Roadmap |
+| :--- | :--- | :--- |
+| **Audio Ingestion** | Browser WebAudio API & WebSocket Chunks | Native SIP/PSTN Trunking & Telco Media Proxy |
+| **ML Inference Hardware** | Local CPU (Apple Silicon / x86_64) | Dedicated NVIDIA TensorRT GPU Inference Clusters |
+| **Database** | PostgreSQL with SQLite Fallback | Multi-AZ Managed PostgreSQL with Read Replicas |
+| **Speech Recognition** | faster-whisper `base`/`tiny` (int8) | Multilingual Streaming Whisper with Conformer ASR |
+| **Call Interception** | Browser UI Acceptance & Termination | SS7 / Diameter Core Network Telco Interception |
+| **Verification Actions** | Simulated In-App Actions | Automated Out-of-Band Push Notification MFA |
+
+---
+
+# Part 22 — Hackathon Judge Questions
+
+### Architecture
+**Q: Why choose FastAPI over Django or Node.js?**  
+*A*: FastAPI provides native asynchronous ASGI performance required for handling persistent WebSocket audio streaming while executing PyTorch machine learning models directly in-process without the latency of inter-process communication.
+
+**Q: Where is PostgreSQL hosted, and what is SQLite fallback?**  
+*A*: In production, PostgreSQL is hosted on dedicated managed database clusters. For portable hackathon demonstration without external infrastructure dependencies, VoiceShield automatically falls back to a local SQLite engine if PostgreSQL is absent.
+
+### Artificial Intelligence
+**Q: Why is Log-Mel spectrogram used for deepfake detection?**  
+*A*: Log-Mel spectrograms compress audio frequencies onto the non-linear Mel scale mirroring human auditory perception while preserving phase discontinuities, vocoder frame stitching artifacts, and high-frequency spectral flux that betray synthetic speech.
+
+**Q: What is the difference between ASVspoof and VoxCeleb?**  
+*A*: ASVspoof is an anti-spoofing benchmark used to train our DeepfakeCNN to distinguish synthetic speech from bonafide speech. VoxCeleb is a massive speaker identification dataset used to train ECAPA-TDNN to extract biometric identity embeddings.
+
+### Security
+**Q: How do you guarantee that Kavach SOC never sees Apex Financial alerts?**  
+*A*: Alerts are filtered at the database query level by `org_id` and dispatched over WebSockets using distinct, isolated pub/sub connection pools managed by `AlertDispatcher`.
+
+---
+
+# Part 23 — Tricky Questions
+
+**Q: "Your speaker similarity is 90%. How can you claim it's an imposter?"**  
+*A*: High speaker similarity only proves that the voice sounds like the enrolled speaker. When an AI clone is used, the vocal timbre matches the victim ($Sim \ge 0.70$), but the DeepfakeCNN reveals high synthetic probability ($P > 0.85$). A match in identity combined with synthetic acoustic markers is the exact definition of a voice-cloning attack.
+
+**Q: "If Sreya is not an employee of Apex Financial Corp, why does Apex receive the alert?"**  
+*A*: The adversary is impersonating Rajesh Malhotra, CFO of Apex Financial Corp. Apex is the victim of corporate identity theft and brand exploitation. Its SOC must be alerted to take enterprise countermeasures, while Sreya receives a citizen safety warning.
+
+---
+
+# Part 24 — File-by-File Implementation Map
+
+- `backend/audio/decoder.py`: Low-level FFmpeg audio decoding to float32 PCM.
+- `backend/audio/preprocessing.py`: Waveform standardization (16 kHz, mono, normalized).
+- `backend/audio/vad.py`: Silero VAD speech gating.
+- `backend/models/deepfake_v2/`: DeepfakeCNN model, Log-Mel extraction, and checkpoint loading.
+- `backend/models/speaker_verifier.py`: ECAPA-TDNN biometric embedding extraction and verification.
+- `backend/models/whisper_asr.py`: faster-whisper STT transcription engine.
+- `backend/intent/intent_detector.py`: Regex conversational intent classifier.
+- `backend/pipeline/risk_engine.py`: Multi-factor risk scoring engine.
+- `backend/pipeline/streaming_pipeline.py`: Real-time streaming pipeline with rolling buffer and EMA.
+- `backend/platform/db/models.py`: 10 SQLAlchemy entity models.
+- `backend/platform/services/orchestrator.py`: Master security orchestration engine.
+- `backend/platform/services/alert_dispatcher.py`: Multi-tenant WebSocket connection manager.
+- `user_frontend/src/pages/AttackerPage.tsx`: Caller Console for Laptop A.
+- `user_frontend/src/pages/HomePage.tsx`: Citizen dashboard for Laptop B.
+- `user_frontend/src/components/call/IncomingCallModal.tsx`: Global call listener and acceptance modal.
+- `soc_frontend/src/pages/Incidents.jsx`: Enterprise SOC security operations console.
+
+---
+
+# Part 25 — API Master Reference
+
+| Method | Endpoint | Purpose | Role Required | Downstream Action |
+| :--- | :--- | :--- | :--- | :--- |
+| `POST` | `/api/auth/login` | Authenticate and issue JWT | Public | Validates credentials against DB |
+| `GET` | `/api/auth/users` | List platform users | Authenticated | Queries active users |
+| `POST` | `/api/calls/start` | Create call session | `CALLER` / `USER` | Provisions `CallSession`, notifies recipient |
+| `POST` | `/api/calls/{id}/accept` | Accept call session | `USER` | Transitions status to `ACTIVE`, broadcasts accept |
+| `POST` | `/api/calls/{id}/end` | Terminate call session | Authenticated | Transitions status to `ENDED`, logs audit |
+| `GET` | `/api/incidents` | Query tenant incidents | `SECURITY_OPERATOR` | Queries DB filtered by caller `org_id` |
+| `WS` | `/ws/stream/{id}` | Real-time audio stream | Public / Session | Ingests PCM, streams `RISK_UPDATE` |
+| `WS` | `/ws/user/{id}` | Personal notification feed | User | Receives `INCOMING_CALL` event |
+| `WS` | `/ws/org/{id}/alerts` | Enterprise SOC alert feed | Operator | Receives `ORGANIZATION_SECURITY_ALERT` |
+
+---
+
+# Part 26 — Database Master Reference
+
+```sql
+-- Core Table Summary
+organizations       (id PK, name, code UNIQUE, is_active, created_at)
+users               (id PK, org_id FK, username UNIQUE, email UNIQUE, hashed_password, role)
+protected_identities(id PK, org_id FK, full_name, title, speaker_id UNIQUE, risk_priority)
+speaker_profiles    (id PK, protected_identity_id FK, speaker_id UNIQUE, embedding_vector_json)
+call_sessions       (session_id PK, org_id FK, user_id FK, recipient_user_id FK, status, current_risk_score)
+risk_events         (id PK, session_id FK, chunk_id, speech_detected, raw_synthetic_prob, risk_score)
+security_incidents  (incident_id PK, org_id FK, session_id FK, severity, scenario, current_risk_score, status)
+security_actions    (action_id PK, incident_id FK, session_id FK, action_type, status, notes)
+audit_logs          (id PK, org_id FK, actor_id, session_id, event_type, details_json, timestamp)
+security_policies   (id PK, org_id FK UNIQUE, policy_config_json, created_at)
+```
+
+---
+
+# Part 27 — Complete Call Trace
+
+1. **Adversary Authentication**: Laptop A logs in as `attacker@demo.com`. Receives JWT with role `CALLER`. Frontend opens `/attacker`.
+2. **Call Initiation**: Laptop A selects Sreya (`user_sreya_001`), claims CFO Rajesh Malhotra (`LA_0069`), and clicks [START CALL]. Backend creates `CallSession` in `RINGING` state.
+3. **Incoming Notification**: Backend sends `INCOMING_CALL` over `/ws/user/user_sreya_001`. Sreya's laptop rings with caller prompt.
+4. **Call Acceptance**: Sreya clicks [Accept Call]. Browser issues `POST /api/calls/{id}/accept`. Backend sets status to `ACTIVE` and broadcasts `CALL_ACCEPTED`.
+5. **Streaming Ingestion**: Laptop A receives `CALL_ACCEPTED` and streams 1-second audio chunks (`tts_cloned_ava.wav`) over `/ws/stream/{session_id}`.
+6. **Inference Execution**:
+   - VAD validates speech presence.
+   - DeepfakeCNN detects neural vocoder artifacts ($P(\text{spoof}) = 0.95$).
+   - ECAPA-TDNN verifies similarity against Rajesh Malhotra ($Sim = 0.88$).
+   - Whisper transcribes: *"This is Rajesh Malhotra, authorize the wire transfer immediately."*
+   - Intent Engine detects `PAYMENT_TRANSFER` and `URGENT_REQUEST`.
+7. **Risk Synthesis**: Composite risk score calculated as **95/100 (CRITICAL)**.
+8. **Dual Alert Dispatch**:
+   - Call stream WebSocket dispatches `USER_SECURITY_ALERT` displaying red warning on Sreya's screen.
+   - Org alert WebSocket dispatches `ORGANIZATION_SECURITY_ALERT` displaying incident on Apex SOC dashboard.
+   - Kavach SOC receives **0 alerts**.
+9. **Termination**: Attacker clicks [END CALL]. Session marks `ENDED`, and audit logs are sealed.
+
+---
+
+# Part 28 — Team Responsibility Map
+
+- **Member 1 (AI Intelligence)**: Audio decoding, Silero VAD, Log-Mel extraction, DeepfakeCNN v2, SpeechBrain ECAPA-TDNN, faster-whisper ASR, and Intent Detection.
+- **Member 2 (Platform & Orchestration)**: FastAPI REST/WebSocket endpoints, SQLAlchemy relational schema, PostgreSQL/SQLite fallback, SecurityOrchestrator, PolicyEngine, and AlertDispatcher.
+- **Member 3 (Citizen Frontend)**: React user frontend, AppShell, live call protection UI, incoming call modals, and the Laptop A Attacker Console.
+- **Member 4 (Enterprise SOC)**: Enterprise SOC dashboard, real-time alert feed integration, forensic incident triage views, and operator action handling.
+
+---
+
+# Part 29 — Team Leader Cheat Sheet
+
+### 10 Things You Must NEVER Claim
+1. Never claim VoiceShield intercepts cellular phone calls directly from mobile base stations. (It operates via VoIP, WebRTC, or browser streams).
+2. Never claim SQLite fallback is a high-availability production failover mechanism.
+3. Never claim speaker similarity alone proves a caller is genuine.
+4. Never claim Sreya is an employee of Apex Financial Corp.
+5. Never claim raw audio is stored in the database for biometric profiles.
+6. Never claim deepfake probability is 100% mathematical certainty.
+7. Never claim intent detection uses a 70B parameter LLM in real-time streaming. (It uses an optimized regex rule engine).
+8. Never claim PSTN cellular call termination is physically implemented in the prototype. (Actions are simulated via software events).
+9. Never claim frontend JavaScript calculates the authoritative security score.
+10. Never claim the system works without prior biometric enrollment for 1:1 speaker verification.
+
+### One-Minute Pitch
+> "VoiceShield is an enterprise real-time voice security platform that detects AI voice clones and executive impersonation attacks as they happen. While traditional systems only ask 'Is this voice fake?', VoiceShield asks 'Can I trust this caller and their request?' We combine Silero VAD, an 80-bin Log-Mel Deepfake CNN, ECAPA-TDNN speaker verification, Faster-Whisper ASR, and contextual intent detection into a single multi-factor risk engine. In our live demonstration across two laptops, when an attacker calls an independent citizen pretending to be an enterprise CFO, VoiceShield alerts the citizen instantly on their phone while alerting the enterprise SOC in real time—with complete multi-tenant isolation."
+
+### Three-Minute Technical Summary
+> "VoiceShield addresses the critical gap in telecommunications security where caller ID spoofing and generative voice cloning bypass traditional human verification. Our architecture is divided into an AI Intelligence layer, a Security Orchestration backend, and dual frontend consoles.  
+> The audio pipeline standardizes streaming chunks to 16 kHz mono float32. Silero VAD gates silence to save inference latency. Our 4-block Conv2D network evaluates acoustic spectral flux on 80-bin Log-Mel spectrograms, while an ECAPA-TDNN network extracts 192-dimensional embeddings to verify claimed executive identities. Concurrently, faster-whisper transcribes dialogue to detect coercive intents like wire transfers or OTP extraction.  
+> Our Security Orchestrator synthesizes these into a single risk score with exponential moving average smoothing. If an enrolled identity's voice is synthesized, our dual-alert engine immediately warns the citizen recipient while routing a security incident to the impersonated company's SOC dashboard over isolated WebSockets. Unrelated organizations receive zero telemetry. The system is built with FastAPI, SQLAlchemy, and React, verified by automated end-to-end integration tests."

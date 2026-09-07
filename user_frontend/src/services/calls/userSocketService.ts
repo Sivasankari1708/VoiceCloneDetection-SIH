@@ -7,6 +7,7 @@ import type { IncomingCallData } from '../../types';
 
 export type UserSocketEvent =
   | { type: 'INCOMING_CALL'; data: IncomingCallData }
+  | { type: 'CALL_ACCEPTED'; data: any }
   | { type: 'CALL_ENDED'; data: { session_id: string; reason?: string } };
 
 class UserSocketService {
@@ -53,6 +54,9 @@ class UserSocketService {
           if (eventName === 'INCOMING_CALL' && payload.data) {
             console.info('[UserSocket] INCOMING_CALL received:', payload.data);
             this.notify({ type: 'INCOMING_CALL', data: payload.data });
+          } else if (eventName === 'CALL_ACCEPTED' && payload.data) {
+            console.info('[UserSocket] CALL_ACCEPTED received:', payload.data);
+            this.notify({ type: 'CALL_ACCEPTED', data: payload.data });
           } else if (eventName === 'CALL_ENDED' && payload.data) {
             console.info('[UserSocket] CALL_ENDED received:', payload.data);
             this.notify({ type: 'CALL_ENDED', data: payload.data });

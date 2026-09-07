@@ -51,24 +51,48 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
     dispatcher = AlertDispatcher.get_instance()
     orchestrator = SecurityOrchestrator(db=db)
 
-    # Verify session exists in DB, or auto-provision for simulator/standalone stream
+    # Verify session exists in DB (strictly enforce real sessions, no simulation fallbacks)
     call = db.query(CallSession).filter_by(session_id=session_id).first()
     if not call:
-        log.info("[WS:Stream] Session '%s' not found in DB; auto-provisioning call session...", session_id)
-        demo_user = db.query(User).filter_by(is_active=True).first()
-        org_id = demo_user.org_id if demo_user else "org_demo_001"
-        user_id = demo_user.id if demo_user else "user_employee_001"
-        call = orchestrator.start_call_session(
-            org_id=org_id,
-            session_id=session_id,
-            user_id=user_id,
-            caller_name="Live Simulator Audio Stream",
-            caller_number="+1-800-VOICESHIELD",
-            claimed_speaker_id="LA_0069",
-        )
+        log.warning("[WS:Stream] Session '%s' not found in DB; rejecting unverified connection.", session_id)
+        await websocket.send_text(json.dumps({
+            "event": WebSocketEventType.ERROR,
+            "data": {"error": f"Call session '{session_id}' does not exist."},
+        }))
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        db.close()
+        return
 
     await dispatcher.register_call_socket(session_id, websocket)
-    log.info("[WS:Stream] Active streaming connected for session '%s'.", session_id)
+    log.info("[WS:Stream] Active streaming connected for session '%s' (status=%s).", session_id, call.status)
+
+    # If call session is already accepted/active, immediately notify connecting client
+    if call.status == "ACTIVE":
+        log.info("[WS:Stream] Session '%s' is ACTIVE; dispatching immediate CALL_ACCEPTED.", session_id)
+        await websocket.send_text(json.dumps({
+            "event": WebSocketEventType.CALL_ACCEPTED,
+            "timestamp": utcnow().isoformat(),
+            "data": call.to_dict(),
+        }))
+        if (call.total_chunks and call.total_chunks > 0) or call.accumulated_transcript:
+            log.info("[WS:Stream] Session '%s' has running telemetry; dispatching RISK_UPDATE replay.", session_id)
+            await websocket.send_text(json.dumps({
+                "event": WebSocketEventType.RISK_UPDATE,
+                "timestamp": utcnow().isoformat(),
+                "data": {
+                    "session_id": call.session_id,
+                    "chunk_id": call.total_chunks or 0,
+                    "risk_score": call.current_risk_score or 0.0,
+                    "risk_level": call.current_risk_level or "SAFE",
+                    "verdict": call.final_verdict or "inconclusive",
+                    "speech_detected": True,
+                    "transcript": call.accumulated_transcript or "",
+                    "accumulated_transcript": call.accumulated_transcript or "",
+                    "is_alert": call.alert_triggered or False,
+                    "alert_reason": call.alert_reason or "",
+                    "recommended_action": "BLOCK / VERIFY" if call.current_risk_level == "CRITICAL" else ("VERIFY" if call.current_risk_level == "HIGH" else "MONITOR"),
+                },
+            }))
 
     chunk_counter = 0
 
@@ -76,11 +100,17 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
         while True:
             # Receive either binary audio bytes or JSON text
             message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                log.info("[WS:Stream] Clean disconnect received for session '%s'.", session_id)
+                break
+
             if "bytes" in message and message["bytes"]:
                 raw_data = message["bytes"]
                 chunk_counter += 1
                 chunk_idx = chunk_counter
                 log.info("[STREAM] Session '%s' | Received binary audio chunk #%d (%d bytes)", session_id, chunk_idx, len(raw_data))
+                # Forward raw audio chunk to recipient / listening call participants
+                await dispatcher.send_binary_to_call(session_id, raw_data, exclude_socket=websocket)
             elif "text" in message and message["text"]:
                 try:
                     payload = json.loads(message["text"])
@@ -90,105 +120,6 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
                 # Handle ping/heartbeat
                 if payload.get("type") == "ping":
                     await websocket.send_text(json.dumps({"type": "pong"}))
-                    continue
-
-                # Handle simulated attack scenario risk events from User Frontend
-                if payload.get("type") == "SCENARIO_RISK_UPDATE":
-                    risk_data = payload.get("data", payload)
-                    scenario = risk_data.get("scenario", "attack_simulation")
-                    risk_score = float(risk_data.get("risk_score", 0.0))
-                    risk_level = risk_data.get("risk_level", "CRITICAL" if risk_score >= 80 else "HIGH" if risk_score >= 60 else "MEDIUM")
-                    claimed_identity = risk_data.get("claimed_identity") or call.caller_name or call.claimed_speaker_id or "Unknown Caller"
-                    intent = risk_data.get("intent", "Coercive Impersonation / Social Engineering")
-                    synthetic_prob = float(risk_data.get("synthetic_probability", 0.92))
-                    speaker_sim = float(risk_data.get("speaker_similarity", 0.85))
-                    reasons = risk_data.get("reasons", ["Synthetic voice characteristics detected", "Coercive social engineering pattern"])
-                    signals = risk_data.get("signals", [])
-
-                    call.current_risk_score = max(call.current_risk_score or 0.0, risk_score)
-                    call.current_risk_level = risk_level
-                    db.commit()
-
-                    log.info("[STREAM:ScenarioRisk] Session '%s' | Risk=%.1f (%s) | Caller: %s", session_id, risk_score, risk_level, claimed_identity)
-
-                    # Flag high risks to organization SOC console!
-                    if risk_score >= 65:
-                        existing_inc = db.query(SecurityIncident).filter_by(
-                            session_id=session_id, org_id=call.org_id
-                        ).first()
-
-                        if existing_inc:
-                            existing_inc.current_risk_score = max(existing_inc.current_risk_score, risk_score)
-                            existing_inc.severity = risk_level
-                            existing_inc.synthetic_probability = synthetic_prob
-                            existing_inc.speaker_similarity = speaker_sim
-                            existing_inc.intent = intent
-                            existing_inc.reasons_json = json.dumps(reasons)
-                            existing_inc.context_signals_json = json.dumps(signals)
-                            existing_inc.recommended_action = "BLOCK_CALL" if risk_score >= 80 else "REQUIRE_ADDITIONAL_VERIFICATION"
-                            existing_inc.updated_at = utcnow()
-                            active_incident = existing_inc
-                        else:
-                            active_incident = SecurityIncident(
-                                org_id=call.org_id,
-                                session_id=session_id,
-                                severity=risk_level,
-                                scenario=scenario,
-                                claimed_identity=claimed_identity,
-                                current_risk_score=risk_score,
-                                synthetic_probability=synthetic_prob,
-                                speaker_similarity=speaker_sim,
-                                identity_status="MISMATCHED" if speaker_sim < 0.6 else "MATCHED",
-                                intent=intent,
-                                context_signals_json=json.dumps(signals),
-                                reasons_json=json.dumps(reasons),
-                                recommended_action="BLOCK_CALL" if risk_score >= 80 else "REQUIRE_ADDITIONAL_VERIFICATION",
-                                status="OPEN",
-                            )
-                            db.add(active_incident)
-
-                            audit = AuditLog(
-                                org_id=call.org_id,
-                                session_id=session_id,
-                                event_type="INCIDENT_CREATED",
-                                details_json=json.dumps({
-                                    "incident_id": active_incident.incident_id,
-                                    "severity": active_incident.severity,
-                                    "scenario": active_incident.scenario,
-                                    "risk_score": active_incident.current_risk_score,
-                                    "source": "SIMULATOR_SCENARIO",
-                                }),
-                            )
-                            db.add(audit)
-
-                        db.commit()
-
-                        # Dispatch real-time ORGANIZATION_SECURITY_ALERT to SOC console!
-                        org_alert_data = {
-                            "incident_id": active_incident.incident_id,
-                            "org_id": call.org_id,
-                            "session_id": session_id,
-                            "severity": active_incident.severity,
-                            "scenario": active_incident.scenario,
-                            "risk_score": active_incident.current_risk_score,
-                            "claimed_identity": active_incident.claimed_identity,
-                            "synthetic_probability": active_incident.synthetic_probability,
-                            "speaker_similarity": active_incident.speaker_similarity,
-                            "intent": active_incident.intent,
-                            "reasons": json.loads(active_incident.reasons_json) if active_incident.reasons_json else [],
-                            "recommended_action": active_incident.recommended_action,
-                            "timestamp": utcnow().isoformat(),
-                        }
-                        await dispatcher.send_to_org(
-                            call.org_id,
-                            {
-                                "event": WebSocketEventType.ORGANIZATION_SECURITY_ALERT,
-                                "timestamp": utcnow().isoformat(),
-                                "data": org_alert_data,
-                            },
-                        )
-                        log.warning("[STREAM] Flagged HIGH RISK incident '%s' to SOC console for org '%s' (Score=%.1f)", active_incident.incident_id, call.org_id, risk_score)
-
                     continue
 
                 chunk_idx = payload.get("chunk_id", chunk_counter + 1)

@@ -52,6 +52,17 @@ export interface StartCallParams {
   waitForAcceptance?: boolean; // If true, wait for CALL_ACCEPTED before streaming audio
 }
 
+// Persistent shared playback audio context across navigation and component mounts
+let sharedPlaybackAudioContext: AudioContext | null = null;
+
+export function getSharedPlaybackAudioContext(): AudioContext {
+  if (!sharedPlaybackAudioContext || sharedPlaybackAudioContext.state === 'closed') {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    sharedPlaybackAudioContext = new AudioCtx();
+  }
+  return sharedPlaybackAudioContext;
+}
+
 export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   private handlers: Array<(event: CallEvent) => void> = [];
   private ws: WebSocket | null = null;
@@ -62,6 +73,8 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   private micMuted = false;
   private lastWaveformEmitTime = 0;
   private audioFileStreamer: AudioFileStreamer = new AudioFileStreamer();
+  private onAcceptCallback: (() => void) | null = null;
+  private canStreamAudio = false;
 
   // Web Audio Graph & Buffering
   private audioContext: AudioContext | null = null;
@@ -71,6 +84,9 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   private rawSampleBuffer: number[] = [];
   private animFrameId: number | null = null;
   private lastCallbackLogTime = 0;
+
+  // Incoming audio playback queue (for recipient to hear caller voice)
+  private nextPlayTime = 0;
 
   // Diagnostics Telemetry State
   private diagnostics: StreamDiagnostics = {
@@ -109,6 +125,32 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
     return this.sessionId;
   }
 
+
+
+  resumePlaybackAudio(): void {
+    try {
+      const ctx = getSharedPlaybackAudioContext();
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch((e) => console.warn('[WS] resumePlaybackAudio failed:', e));
+      }
+    } catch (e) {
+      console.warn('[WS] resumePlaybackAudio failed:', e);
+    }
+  }
+
+  notifyCallAccepted(sessionData?: any): void {
+    console.info('[WS] notifyCallAccepted invoked — transitioning to active');
+    this.canStreamAudio = true;
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      this.audioContext.resume().catch(() => {});
+    }
+    this.resumePlaybackAudio();
+    this.emit({ type: 'call_accepted', timestamp: Date.now(), payload: sessionData || {} });
+    if (this.onAcceptCallback) {
+      this.onAcceptCallback();
+    }
+  }
+
   setMicEnabled(enabled: boolean): void {
     this.micMuted = !enabled;
     this.diagnostics.micStatus = enabled ? 'connected' : 'requesting';
@@ -129,13 +171,22 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
     this.callStartTime = new Date();
     this.transcriptCache = [];
     this.rawSampleBuffer = [];
-
+    this.onAcceptCallback = null;
     const params: StartCallParams =
       typeof scenarioOrParams === 'string'
         ? { callId: callIdFallback }
         : scenarioOrParams;
 
     const callId = params.callId || callIdFallback;
+
+    this.canStreamAudio = !params.waitForAcceptance;
+
+    // Immediately initialize microphone if caller is using live mic (ensures user gesture unlocks mic)
+    if (!params.receiveOnly && !params.testAudioUrl) {
+      this.startMicrophone().catch((err) => {
+        console.warn('[WS] Early microphone initialization notice:', err);
+      });
+    }
 
     this.diagnostics = {
       micStatus: params.testAudioUrl ? 'connected' : 'requesting',
@@ -164,7 +215,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       source: 'browser',
       caller: {
         name: params.callerName || 'Inbound Call',
-        claimedRole: params.claimedSpeakerId === 'LA_0069' ? 'Chief Financial Officer' : 'Direct Call',
+        claimedRole: params.claimedSpeakerId === 'LA_0069' ? 'Chief Financial Officer' : (params.claimedSpeakerId ? 'Protected Executive' : 'Inbound Voice Call'),
         organization: 'Protected Organization',
         status: 'checking',
         statusMessage: 'VoiceShield active: Analyzing speech patterns...',
@@ -209,7 +260,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          caller_name: params.callerName || 'Caller Simulator',
+          caller_name: params.callerName || 'External Caller',
           caller_number: 'browser_stream',
           claimed_speaker_id: params.claimedSpeakerId || null,
           claimed_org_id: params.claimedOrgId || null,
@@ -281,6 +332,10 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       }
     };
 
+    this.onAcceptCallback = () => {
+      startAudioSource();
+    };
+
     ws.onopen = async () => {
       console.info('[WS] OPEN — WebSocket stream connected successfully');
       this.diagnostics.wsStatus = 'connected';
@@ -294,6 +349,10 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
     };
 
     ws.onmessage = (evt) => {
+      if (evt.data instanceof ArrayBuffer) {
+        this.handleIncomingAudio(evt.data);
+        return;
+      }
       if (typeof evt.data !== 'string') return;
       try {
         const envelope = JSON.parse(evt.data) as {
@@ -331,6 +390,10 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
           this.handleSecurityAlert(alertData);
         } else if (eventName === 'CALL_ACCEPTED') {
           console.info('[WS RX] CALL_ACCEPTED received from backend');
+          this.canStreamAudio = true;
+          if (this.audioContext && this.audioContext.state === 'suspended') {
+            this.audioContext.resume().catch(() => {});
+          }
           this.emit({ type: 'call_accepted', timestamp: Date.now(), payload: (data as any) || {} });
           if (params.waitForAcceptance) {
             console.info('[WS] Recipient accepted call! Commencing audio stream now...');
@@ -364,6 +427,8 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
     this.audioFileStreamer.stop();
     this.stopMicrophone();
 
+    this.nextPlayTime = 0;
+
     if (this.animFrameId) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
@@ -389,6 +454,56 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
     }
   }
 
+  private async handleIncomingAudio(arrayBuffer: ArrayBuffer): Promise<void> {
+    if (!this.active) return;
+    try {
+      const ctx = getSharedPlaybackAudioContext();
+      if (ctx.state === 'suspended') {
+        await ctx.resume().catch(() => {});
+      }
+
+      // decodeAudioData detaches the buffer, pass a copy
+      const copy = arrayBuffer.slice(0);
+      const audioBuffer = await ctx.decodeAudioData(copy);
+
+      // Compute RMS for recipient energy level meter and waveform animation
+      const channelData = audioBuffer.getChannelData(0);
+      let sumSq = 0;
+      for (let i = 0; i < channelData.length; i++) {
+        sumSq += channelData[i] * channelData[i];
+      }
+      const rms = Math.sqrt(sumSq / (channelData.length || 1));
+      this.diagnostics.rms = rms;
+      const normalizedActivity = Math.min(1.0, Math.max(0.04, rms * 4.5));
+      this.diagnostics.activityLevel = normalizedActivity;
+
+      const now = Date.now();
+      if (now - this.lastWaveformEmitTime >= 80) {
+        this.lastWaveformEmitTime = now;
+        this.emit({
+          type: 'waveform_update',
+          timestamp: now,
+          payload: { waveformActivity: normalizedActivity },
+        });
+      }
+
+      // Seamless buffer scheduling on timeline
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ctx.destination);
+
+      const currentTime = ctx.currentTime;
+      // Resynchronize if buffer schedule fell behind or drifted too far ahead
+      if (this.nextPlayTime < currentTime || this.nextPlayTime > currentTime + 1.5) {
+        this.nextPlayTime = currentTime;
+      }
+      source.start(this.nextPlayTime);
+      this.nextPlayTime += audioBuffer.duration;
+    } catch (err) {
+      console.warn('[WS] Error decoding/playing incoming audio chunk:', err);
+    }
+  }
+
   terminate(reason: string = 'NORMAL_HANGUP'): void {
     this.stop(true, reason);
   }
@@ -400,6 +515,11 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   // ── Real Chrome Microphone Capture, WebAudio Graph & Resampling ──
   private async startMicrophone(): Promise<void> {
     try {
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.warn('[VOICE] navigator.mediaDevices.getUserMedia is unavailable on this browser/origin.');
+        this.diagnostics.micStatus = 'denied';
+        return;
+      }
       console.info('[VOICE] Requesting microphone access from browser...');
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -444,7 +564,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       const targetNativeChunkSize = Math.round(nativeSr * 1.0); // 1.0 second
 
       processor.onaudioprocess = (e) => {
-        if (!this.active) return;
+        if (!this.active || !this.canStreamAudio) return;
         this.diagnostics.audioProcessCallbacks++;
 
         const inputData = e.inputBuffer.getChannelData(0);

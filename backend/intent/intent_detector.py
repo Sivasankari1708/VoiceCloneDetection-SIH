@@ -107,7 +107,7 @@ class IntentDetector:
         """Construct modular regex and phrase rules for each intent category."""
         return {
             IntentType.OTP_REQUEST: [
-                IntentRule(r"\b(?:otp|one[- ]time[- ]password|verification[- ]code|auth[- ]code|sms[- ]code)\b", "otp_keyword", 1.5),
+                IntentRule(r"\b(?:otp|one[- ]time[- ]password|verification[- ]code|auth[- ]code|sms[- ]code|security[- ]code|2fa|mfa)\b", "otp_keyword", 1.5),
                 IntentRule(r"\b(?:send|give|share|tell|forward|provide|enter|read)\b.*\b(?:otp|one[- ]time[- ]password|verification[- ]code|auth[- ]code|passcode)\b", "request_otp_action", 1.5),
                 IntentRule(r"\b(?:what is|what's)\b.*\b(?:the otp|your otp|the code|one[- ]time[- ]password)\b", "ask_otp_phrase", 1.2),
                 IntentRule(r"\b(?:received|just sent)\b.*\b(?:otp|code|one[- ]time[- ]password)\b", "received_otp_action", 1.0),
@@ -117,12 +117,13 @@ class IntentDetector:
                 IntentRule(r"\b(?:tell|share|give|send|provide|what(?:'s| is))\b.*?(?<!one-time\s)(?<!one\stime\s)\b(?:your|the)?\s*(?:password|pin|credentials|cvv)\b", "request_credential_action", 1.2),
                 IntentRule(r"\b(?:login|banking|account)\b.*\b(?:credentials|password|details|login info)\b", "banking_credentials_phrase", 1.1),
                 IntentRule(r"\b(?:credit[- ]card|debit[- ]card)\b.*\b(?:number|details|expiry|cvv)\b", "card_details_phrase", 1.1),
+                IntentRule(r"\b(?:kyc|identity verification|verify identity|aadhaar|pan card|passport|social security)\b", "kyc_identity_phrase", 1.2),
             ],
             IntentType.PAYMENT_TRANSFER: [
                 IntentRule(r"\b(?:transfer|send|wire|deposit|remit|pay)\b.*\b(?:money|funds?|rupees|rs\.?|dollars|\$|cash|amount)\b", "transfer_money_action", 1.2),
-                IntentRule(r"\b(?:transfer|send|pay)\b.*\b(?:\d+|twenty|thirty|forty|fifty|hundred|thousand|lakh|crore)\b", "transfer_amount_action", 1.2),
+                IntentRule(r"\b(?:transfer|send|pay)\b.*\b(?:\d+|twenty|thirty|forty|fifty|hundred|thousand|lakh|crore|million)\b", "transfer_amount_action", 1.2),
                 IntentRule(r"\b(?:bank[- ]account|upi[- ]id|upi|wallet|beneficiary|account[- ]number|gpay|phonepe|paytm|neft|rtgs|imps)\b", "payment_rail_keyword", 0.9),
-                IntentRule(r"\b(?:payment[- ]transfer|money[- ]transfer|wire[- ]transfer|quick[- ]pay)\b", "payment_action_compound", 1.1),
+                IntentRule(r"\b(?:payment[- ]transfer|money[- ]transfer|wire[- ]transfer|quick[- ]pay|invoice payment|vendor payment)\b", "payment_action_compound", 1.2),
                 IntentRule(r"\b(?:transfer|payment)\b", "payment_term", 0.8),
             ],
             IntentType.URGENT_REQUEST: [
@@ -130,6 +131,7 @@ class IntentDetector:
                 IntentRule(r"\b(?:hurry up|fast|in a rush|crucial|critical time)\b", "urgency_phrase", 0.9),
                 IntentRule(r"\b(?:do (?:it|this)|act)\b.*\b(?:now|immediately|fast|urgently)\b", "urgent_action_command", 1.1),
                 IntentRule(r"\b(?:matter of life and death|serious trouble|hospital emergency|accident)\b", "crisis_phrase", 1.2),
+                IntentRule(r"\b(?:don't tell anyone|keep this confidential|strictly confidential|between us|secret)\b", "coercive_secrecy_phrase", 1.3),
             ],
             IntentType.NORMAL_CONVERSATION: [
                 IntentRule(r"\b(?:how are you|how was your day|good morning|good evening|hello|hi|hey|thanks|thank you|see you|catch up|talk to you later)\b", "conversational_greeting", 0.6),

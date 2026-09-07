@@ -18,6 +18,7 @@ import { config } from '../services/config';
 import { authService } from '../services/auth/authService';
 import { useAuth } from '../context/AppContext';
 import { WebSocketLiveCallStreamImpl } from '../services/calls/webSocketLiveCallStream';
+import { userSocketService } from '../services/calls/userSocketService';
 import type { CallEvent } from '../types';
 import SeverityBadge from '../components/severity/SeverityBadge';
 import LiveVoiceWaveform from '../components/waveform/LiveVoiceWaveform';
@@ -63,17 +64,30 @@ interface AttackScenario {
 
 const ATTACK_SCENARIOS: AttackScenario[] = [
   {
+    id: 'ai_clone_cfo_voice',
+    name: 'AI Voice Clone — Rajesh Malhotra Wire Transfer Script',
+    description: "Synthesized AI voice clone speaking: 'Hello Sreya, this is Rajesh Malhotra, CFO of Apex Financial Corp. Authorize an urgent wire transfer...'",
+    type: 'file',
+    sampleUrl: '/samples/cfo_rajesh_urgent_wire.wav',
+    callerName: 'Rajesh Malhotra (CFO, Apex Financial Corp)',
+    claimedSpeakerId: 'LA_0069',
+    claimedOrgId: 'org_demo_001',
+    claimedOrgName: 'Apex Financial Corp',
+    badge: 'AI VOICE CLONE',
+    badgeColor: 'bg-red-500 text-white',
+  },
+  {
     id: 'ai_clone_cfo',
-    name: 'AI-Cloned Executive (High Risk)',
-    description: 'Synthesized deepfake clone of CFO Rajesh Malhotra demanding urgent wire transfer.',
+    name: 'AI Deepfake Benchmark (ASVspoof Sample)',
+    description: 'Acoustic neural TTS benchmark sample testing synthetic spectral artifacts and phase anomalies.',
     type: 'file',
     sampleUrl: '/samples/tts_cloned_ava.wav',
     callerName: 'Rajesh Malhotra (CFO, Apex Financial Corp)',
     claimedSpeakerId: 'LA_0069',
     claimedOrgId: 'org_demo_001',
     claimedOrgName: 'Apex Financial Corp',
-    badge: 'DEEPFAKE SPOOF',
-    badgeColor: 'bg-red-500 text-white',
+    badge: 'BENCHMARK SAMPLE',
+    badgeColor: 'bg-rose-600 text-white',
   },
   {
     id: 'genuine_cfo',
@@ -188,6 +202,65 @@ export default function AttackerPage() {
       }
     };
   }, []);
+
+  // Connect personal user WebSocket for attacker to receive direct notifications
+  useEffect(() => {
+    if (!user) return;
+    userSocketService.connect(user.id);
+    const unsubscribe = userSocketService.subscribe((event) => {
+      if (event.type === 'CALL_ACCEPTED') {
+        const data = event.data;
+        if (data && (!activeSessionId || data.session_id === activeSessionId)) {
+          console.info('[AttackerPage] User socket received CALL_ACCEPTED:', data);
+          setCallState('active');
+          setStatusNote('Call accepted by recipient! Audio streaming is now active.');
+          if (streamRef.current) {
+            streamRef.current.notifyCallAccepted(data);
+          }
+        }
+      } else if (event.type === 'CALL_ENDED') {
+        setCallState('ended');
+        setStatusNote('Call ended.');
+      }
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [user, activeSessionId]);
+
+  // Polling fallback while ringing to guarantee state transition as soon as recipient accepts
+  useEffect(() => {
+    if (callState !== 'ringing' || !activeSessionId) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const token = authService.getToken();
+        const res = await fetch(`${config.apiBaseUrl}/api/calls/${activeSessionId}`, {
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+        if (res.ok) {
+          const callData = await res.json();
+          if (callData.status === 'ACTIVE') {
+            console.info('[AttackerPage] Poller detected call is ACTIVE — connecting stream');
+            setCallState('active');
+            setStatusNote('Call accepted by recipient! Audio streaming is now active.');
+            if (streamRef.current) {
+              streamRef.current.notifyCallAccepted(callData);
+            }
+          } else if (callData.status === 'ENDED') {
+            setCallState('ended');
+            setStatusNote('Call ended.');
+          }
+        }
+      } catch (err) {
+        console.warn('[AttackerPage] Polling call status failed:', err);
+      }
+    }, 1000);
+
+    return () => clearInterval(pollInterval);
+  }, [callState, activeSessionId]);
 
   const activeScenario = ATTACK_SCENARIOS.find((s) => s.id === selectedScenarioId) || ATTACK_SCENARIOS[0];
 

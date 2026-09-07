@@ -193,7 +193,7 @@ export default function HomePage() {
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-slate-900 text-sm truncate">{call.caller.name}</span>
                       <span className="text-slate-400 text-xs">·</span>
-                      <span className="text-slate-500 text-xs truncate">{call.caller.claimedRole || 'Direct Call'}</span>
+                      <span className="text-slate-500 text-xs truncate">{call.caller.claimedRole || 'Inbound Voice Call'}</span>
                     </div>
                     <div className="text-xs text-slate-400 mt-0.5">{formatRelativeTime(call.startTime)}</div>
                   </div>

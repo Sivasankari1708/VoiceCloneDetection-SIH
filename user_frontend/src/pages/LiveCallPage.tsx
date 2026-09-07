@@ -14,6 +14,7 @@ import {
   Radio,
   UserCheck,
   PhoneForwarded,
+  Volume2,
 } from 'lucide-react';
 import { useAppContext, useActiveCall, useCallHistory } from '../context/AppContext';
 import { liveCallStream } from '../services/calls/liveCallStream';
@@ -29,6 +30,8 @@ import RealTimeWarningModal from '../components/call/RealTimeWarningModal';
 import RiskTimeline, { type RiskTimelineEntry } from '../components/severity/RiskTimeline';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
+import { config } from '../services/config';
+import { scoreToSecurityMessage, mapRiskLevel, mapVerdict, mapIdentityStatus } from '../utils/dataMapper';
 
 export default function LiveCallPage() {
   const navigate = useNavigate();
@@ -50,7 +53,7 @@ export default function LiveCallPage() {
   const [warningModalOpen, setWarningModalOpen] = useState(false);
   const warningDismissedRef = useRef(false);
   const [riskHistory, setRiskHistory] = useState<RiskTimelineEntry[]>([]);
-  const streamStarted = useRef(false);
+  const activeSessionIdRef = useRef<string | null>(null);
 
   // 1. Maintain persistent live call event subscription throughout page lifecycle
   useEffect(() => {
@@ -121,27 +124,84 @@ export default function LiveCallPage() {
     };
   }, [setActiveCall, updateActiveCall, isRecipientMode]);
 
-  // 2. Start initial call session once on component mount
+  // 2. Global user interaction listener to unlock Web Audio playback
   useEffect(() => {
-    if (streamStarted.current) return;
-    streamStarted.current = true;
+    const unlockAudio = () => {
+      if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
+        liveCallStream.resumePlaybackAudio();
+      }
+    };
+    window.addEventListener('click', unlockAudio);
+    window.addEventListener('keydown', unlockAudio);
+    return () => {
+      window.removeEventListener('click', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+  }, []);
 
-    if (querySessionId) {
-      // Recipient Mode (Interface B): join backend session in receive-only mode
-      liveCallStream.start({
-        sessionId: querySessionId,
-        callerName: queryCallerName || 'Inbound Call',
-        claimedSpeakerId: queryClaimedSpeaker || undefined,
-        receiveOnly: true,
-      });
-    } else {
-      // Caller Live Mic Mode: start direct live session with microphone capture
-      liveCallStream.start({
-        callerName: 'Direct Call Stream',
-        receiveOnly: false,
-      });
+  // 3. Connect to call session on mount or whenever querySessionId changes
+  useEffect(() => {
+    if (!querySessionId) return;
+    if (activeSessionIdRef.current === querySessionId) return;
+
+    activeSessionIdRef.current = querySessionId;
+    setStartTime(new Date());
+    setRiskHistory([]);
+
+    if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
+      liveCallStream.resumePlaybackAudio();
     }
-  }, [querySessionId, queryCallerName, queryClaimedSpeaker]);
+
+    // Join backend session in receive-only mode
+    liveCallStream.start({
+      sessionId: querySessionId,
+      callerName: queryCallerName || 'Inbound Call',
+      claimedSpeakerId: queryClaimedSpeaker || undefined,
+      receiveOnly: true,
+    });
+
+    // Prefetch existing call state (for late joiners / reloads)
+    const token = localStorage.getItem('voiceshield_token');
+    fetch(`${config.apiBaseUrl}/api/calls/${querySessionId}`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return;
+        if (data.accumulated_transcript || data.current_risk_score > 0) {
+          updateActiveCall({
+            security: {
+              score: data.current_risk_score,
+              severity: mapRiskLevel(data.current_risk_level),
+              message: data.alert_reason || scoreToSecurityMessage(data.current_risk_score),
+              voiceAuthenticity: mapVerdict(data.final_verdict),
+              callerIdentity: mapIdentityStatus(data.claimed_speaker_id ? 'INCONCLUSIVE' : 'UNENROLLED'),
+              signals: [],
+              securityTeamNotified: data.alert_triggered,
+            },
+            transcript: data.accumulated_transcript
+              ? [
+                  {
+                    id: 'seg-init',
+                    speaker: 'caller',
+                    text: data.accumulated_transcript,
+                    timestamp: 0,
+                    isPartial: false,
+                  },
+                ]
+              : [],
+          });
+        }
+      })
+      .catch((err) => console.warn('[LiveCallPage] Failed to prefetch call state:', err));
+
+    return () => {
+      liveCallStream.stop(false);
+      activeSessionIdRef.current = null;
+    };
+  }, [querySessionId, queryCallerName, queryClaimedSpeaker, updateActiveCall]);
 
   const handleToggleMic = useCallback(() => {
     const nextState = !micActive;
@@ -178,29 +238,36 @@ export default function LiveCallPage() {
         signals: activeCall.security.signals,
         scenarioId: activeCall.scenarioId,
       };
-      addCallHistory(historyItem);
 
-      if (activeCall.security.severity === 'CRITICAL' || activeCall.security.severity === 'HIGH') {
-        dispatch({
-          type: 'ADD_NOTIFICATION',
-          payload: {
-            id: `notif-${Date.now()}`,
-            type: 'security_alert',
-            title: 'Suspicious call detected',
-            message: `A ${activeCall.security.severity.toLowerCase()} risk call was analyzed and ended.`,
-            read: false,
-            createdAt: new Date(),
-            callId: querySessionId || callId,
-            actionLabel: 'View details',
-            actionRoute: `/history/${querySessionId || callId}`,
-          },
-        });
-      }
+      addCallHistory(historyItem);
+      dispatch({ type: 'ADD_CALL_HISTORY', payload: historyItem });
     }
 
     endActiveCall();
     navigate('/history');
   }, [activeCall, startTime, callId, querySessionId, addCallHistory, endActiveCall, navigate, dispatch]);
+
+  if (!querySessionId && !activeCall) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[70vh] p-4 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4 border border-blue-200 shadow-xs">
+          <Radio size={32} />
+        </div>
+        <h2 className="text-xl font-bold text-slate-800">No Active Call Session</h2>
+        <p className="text-slate-500 text-sm mt-2 max-w-md">
+          There is currently no ongoing call session. To test real-time AI voice clone protection, launch an attack call from the Attacker Console or wait for an incoming call on this device.
+        </p>
+        <div className="mt-6 flex items-center gap-3">
+          <Button variant="primary" onClick={() => navigate('/attacker')}>
+            Open Attacker Console
+          </Button>
+          <Button variant="outline" onClick={() => navigate('/')}>
+            Back to Dashboard
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (!activeCall) {
     return (
@@ -208,10 +275,10 @@ export default function LiveCallPage() {
         <div className="w-12 h-12 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
         <h2 className="text-lg font-semibold text-slate-800">Connecting to VoiceShield Protection...</h2>
         <p className="text-slate-500 text-sm mt-1 max-w-sm">
-          {isRecipientMode ? 'Attaching to live backend session telemetry...' : 'Initializing microphone audio stream and AI detection engine.'}
+          Attaching to live backend session telemetry...
         </p>
         <div className="mt-6 flex gap-3">
-          <Button variant="outline" size="sm" onClick={() => navigate('/home')}>
+          <Button variant="outline" size="sm" onClick={() => navigate('/')}>
             Cancel
           </Button>
         </div>
@@ -324,8 +391,8 @@ export default function LiveCallPage() {
                   Connected to active call session. Voice clone detection, biometric authenticity scores, and real-time Whisper transcription telemetry are being received directly from the AI detection pipeline.
                 </p>
                 <div className="mt-2 flex items-center gap-2 text-[11px] text-blue-700 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
-                  <span>Direct analysis streaming is active. (Peer-to-peer audio relay is not enabled by backend; AI telemetry is mirrored live.)</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>Real-time audio relay and AI security analysis active. Audio chunks stream dynamically.</span>
                 </div>
               </div>
             </div>
@@ -417,12 +484,27 @@ export default function LiveCallPage() {
                   className="justify-center"
                 />
               </div>
-              <div className="text-[11px] text-slate-500 text-center flex items-center justify-center gap-2">
-                <span className={micActive ? 'text-emerald-700 font-medium' : 'text-slate-600 font-medium'}>
-                  {isRecipientMode ? '● Recipient Monitor' : micActive ? '● Mic active (16kHz PCM)' : '○ Mic muted'}
-                </span>
-                <span>•</span>
-                <span className="text-slate-500">FastAPI ML Pipeline</span>
+              <div className="text-[11px] text-slate-500 text-center flex flex-col items-center justify-center gap-1.5 pt-1">
+                <div className="flex items-center justify-center gap-2">
+                  <span className={micActive ? 'text-emerald-700 font-medium' : 'text-slate-600 font-medium'}>
+                    {isRecipientMode ? '● Recipient Monitor' : micActive ? '● Mic active (16kHz PCM)' : '○ Mic muted'}
+                  </span>
+                  <span>•</span>
+                  <span className="text-slate-500">FastAPI ML Pipeline</span>
+                </div>
+                {isRecipientMode && (
+                  <button
+                    onClick={() => {
+                      if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
+                        liveCallStream.resumePlaybackAudio();
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200 cursor-pointer"
+                  >
+                    <Volume2 size={12} />
+                    Speaker Output (Click to Unmute / Test Sound)
+                  </button>
+                )}
               </div>
             </Card>
 
@@ -451,10 +533,12 @@ export default function LiveCallPage() {
               <ShieldAlert size={24} className="text-red-600 flex-shrink-0 mt-0.5" />
               <div>
                 <div className="font-bold text-red-900 text-base">
-                  ⚠ {isCritical ? 'CRITICAL RISK: Possible impersonation detected' : 'HIGH RISK: Suspicious call patterns'}
+                  ⚠ {isCritical ? 'CRITICAL THREAT: AI Voice Clone Impersonation Detected' : 'HIGH RISK: Suspicious Call / Voice Patterns'}
                 </div>
                 <div className="text-sm text-red-700 mt-1 font-medium">
-                  Do not share OTP, passwords, or approve payments. Verification recommended.
+                  {isCritical
+                    ? `Attacker is using a synthetic voice clone claiming to be ${caller.name || 'protected executive'}. Do not transfer funds, share OTPs, or authorize requests.`
+                    : 'Do not share OTP, passwords, or approve payments. Verification recommended.'}
                 </div>
                 {security.securityTeamNotified && (
                   <div className="text-xs text-red-600 mt-1.5 font-semibold flex items-center gap-1">

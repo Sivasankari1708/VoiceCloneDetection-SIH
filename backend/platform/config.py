@@ -12,6 +12,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 @dataclass
 class PlatformConfig:
@@ -26,9 +30,9 @@ class PlatformConfig:
     )
 
     # Database settings
-    # Supports PostgreSQL (e.g. postgresql://user:pass@localhost:5432/vcd_db)
+    # Supports PostgreSQL (e.g. postgresql://localhost:5432/voiceshield)
     # with automatic SQLite fallback for zero-dependency local testing.
-    database_url: str = "sqlite:///./voice_clone_detection.db"
+    database_url: str = "postgresql://localhost:5432/voiceshield"
     db_echo: bool = False
 
     # Authentication & Security
@@ -54,7 +58,7 @@ class PlatformConfig:
     @classmethod
     def from_env(cls) -> "PlatformConfig":
         """Build configuration from environment variables."""
-        db_url = os.getenv("DATABASE_URL", "sqlite:///./voice_clone_detection.db")
+        db_url = os.getenv("DATABASE_URL", "postgresql://localhost:5432/voiceshield")
         # Handle Heroku/Render postgres:// prefix if present
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)

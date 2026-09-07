@@ -154,7 +154,7 @@ export default function CallDetailsPage() {
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <h1 className="text-lg font-bold text-slate-900">{call.caller.name}</h1>
-                <div className="text-slate-500 text-sm">{call.caller.claimedRole || 'Direct Call'}</div>
+                <div className="text-slate-500 text-sm">{call.caller.claimedRole || 'Inbound Voice Call'}</div>
               </div>
               <SeverityBadge level={call.finalSeverity} size="md" />
             </div>

@@ -338,6 +338,75 @@ class StreamingSession:
                 self.accumulated_transcript_segments.append(cleaned)
             return " ".join(self.accumulated_transcript_segments)
 
+    def append_incremental_transcript(self, current_window_text: str) -> str:
+        """
+        Extract newly recognized words from rolling audio window text and append
+        to the session's accumulated transcript.
+
+        Returns
+        -------
+        str
+            The new incremental chunk text (or empty string if no new speech).
+        """
+        import re
+
+        with self._lock:
+            cur_raw = current_window_text.strip()
+            if not cur_raw:
+                return ""
+
+            existing_full = " ".join(self.accumulated_transcript_segments).strip()
+            if not existing_full:
+                self.accumulated_transcript_segments.append(cur_raw)
+                return cur_raw
+
+            ex_words = [re.sub(r"[^\w]", "", w).lower() for w in existing_full.split() if re.sub(r"[^\w]", "", w)]
+            cur_tokens = cur_raw.split()
+            cur_words = [re.sub(r"[^\w]", "", w).lower() for w in cur_tokens if re.sub(r"[^\w]", "", w)]
+
+            # 1. Direct suffix-to-prefix overlap
+            max_k = 0
+            for k in range(min(len(cur_words), len(ex_words)), 0, -1):
+                if ex_words[-k:] == cur_words[:k]:
+                    max_k = k
+                    break
+
+            if max_k > 0:
+                new_tokens = cur_tokens[max_k:]
+                new_chunk = " ".join(new_tokens).strip()
+            else:
+                # 2. Look for best matching n-gram (length >= 2) of cur_words in the trailing words of existing
+                tail_ex = ex_words[-8:] if len(ex_words) >= 8 else ex_words
+                best_match_cur_idx = 0
+                for n in range(min(4, len(cur_words)), 1, -1):
+                    found = False
+                    for i in range(len(cur_words) - n + 1):
+                        gram = cur_words[i : i + n]
+                        for j in range(len(tail_ex) - n + 1):
+                            if tail_ex[j : j + n] == gram:
+                                best_match_cur_idx = i + n
+                                found = True
+                                break
+                        if found:
+                            break
+                    if found:
+                        break
+
+                if best_match_cur_idx > 0:
+                    new_tokens = cur_tokens[best_match_cur_idx:]
+                    new_chunk = " ".join(new_tokens).strip()
+                else:
+                    cur_str = " ".join(cur_words)
+                    ex_str = " ".join(ex_words)
+                    if cur_str and cur_str in ex_str:
+                        new_chunk = ""
+                    else:
+                        new_chunk = cur_raw
+
+            if new_chunk:
+                self.accumulated_transcript_segments.append(new_chunk)
+            return new_chunk
+
     def get_accumulated_transcript(self) -> str:
         """Return the accumulated transcript string so far."""
         with self._lock:
@@ -757,13 +826,25 @@ class StreamingAudioPipeline:
             )
         timings["speaker_verifier_ms"] = (time.perf_counter() - t0) * 1000.0
 
-        # ── 7. faster-whisper Speech-to-Text on Current Chunk ───────────────
+        # ── 7. faster-whisper Speech-to-Text on Rolling Audio Context ───────────────
         t0 = time.perf_counter()
-        asr_res: ASRResult = self.pipeline.whisper_asr.transcribe(chunk_waveform, vad_filter=True)
+        # Use rolling audio buffer (up to 3.0s = 48,000 samples) so Whisper has full acoustic context
+        # without cutting phonemes at 1.0s boundaries
+        rolling_buf = session.get_audio_buffer()
+        if len(rolling_buf) > 48000:
+            asr_input = rolling_buf[-48000:]
+        elif len(rolling_buf) >= len(chunk_waveform):
+            asr_input = rolling_buf
+        else:
+            asr_input = chunk_waveform
+
+        asr_res: ASRResult = self.pipeline.whisper_asr.transcribe(asr_input, vad_filter=False)
         timings["whisper_asr_ms"] = (time.perf_counter() - t0) * 1000.0
 
-        chunk_text = asr_res.transcript
-        accumulated_text = session.append_transcript(chunk_text)
+        raw_asr_text = asr_res.transcript.strip()
+        chunk_text = session.append_incremental_transcript(raw_asr_text)
+        accumulated_text = session.get_accumulated_transcript()
+
         schema_asr = TranscriptionResult(
             text=chunk_text,
             language=asr_res.detected_language,

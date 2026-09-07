@@ -85,6 +85,37 @@ class AlertDispatcher:
                 if session_id in self._call_sockets:
                     self._call_sockets[session_id].difference_update(dead)
 
+    async def send_binary_to_call(
+        self,
+        session_id: str,
+        data: bytes,
+        exclude_socket: Optional[WebSocket] = None,
+    ) -> None:
+        """Forward raw binary audio chunk to other participants on the call (e.g. recipient)."""
+        sockets = set()
+        async with self._lock:
+            if session_id in self._call_sockets:
+                sockets = set(self._call_sockets[session_id])
+
+        if exclude_socket:
+            sockets.discard(exclude_socket)
+
+        if not sockets:
+            return
+
+        dead = set()
+        for ws in sockets:
+            try:
+                await ws.send_bytes(data)
+            except Exception as exc:
+                log.debug("[AlertDispatcher] Failed sending binary audio to call socket %s: %s", session_id, exc)
+                dead.add(ws)
+
+        if dead:
+            async with self._lock:
+                if session_id in self._call_sockets:
+                    self._call_sockets[session_id].difference_update(dead)
+
     # ── Organization Alert Feed Connections (Per-Organization) ──────────
 
     async def register_org_socket(self, org_id: str, websocket: WebSocket) -> None:

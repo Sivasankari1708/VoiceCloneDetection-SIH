@@ -69,7 +69,7 @@ export default function SecurityAlertPage() {
           </div>
           <div>
             <div className="font-semibold text-slate-900">{caller.name}</div>
-            <div className="text-sm text-slate-500">{caller.claimedRole || 'Direct Call'}</div>
+            <div className="text-sm text-slate-500">{caller.claimedRole || 'Inbound Voice Call'}</div>
             <div className="flex items-center gap-1.5 mt-1 text-xs text-red-600">
               <XCircle size={12} />
               {caller.statusMessage || 'Security alert triggered'}

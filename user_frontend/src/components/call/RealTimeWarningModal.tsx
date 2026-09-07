@@ -63,7 +63,7 @@ export const RealTimeWarningModal: React.FC<RealTimeWarningModalProps> = ({
                   {isCritical ? '⚠ CRITICAL RISK DETECTED' : '⚠ HIGH RISK WARNING'}
                 </span>
                 <h2 id="warning-modal-title" className="text-xl font-extrabold text-white">
-                  Possible Impersonation Detected
+                  AI Voice Clone Impersonation Detected
                 </h2>
               </div>
             </div>
@@ -82,7 +82,7 @@ export const RealTimeWarningModal: React.FC<RealTimeWarningModalProps> = ({
             className="mt-4 p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2"
           >
             <p className="text-sm font-semibold text-rose-300">
-              Do not share OTP, passwords, or approve payments.
+              Caller is fraudulently claiming to be an enrolled executive using a synthetic voice clone. Do not share OTP, passwords, or approve payments.
             </p>
             <p className="text-xs text-slate-300">
               {message ||

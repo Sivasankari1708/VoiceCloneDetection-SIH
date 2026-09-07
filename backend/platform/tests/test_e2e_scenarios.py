@@ -59,12 +59,35 @@ def e2e_setup():
     db = SessionLocal()
     try:
         org = db.query(Organization).filter_by(code="DEMO_CORP").first()
+        if not org:
+            org = Organization(name="Apex Financial Corp (Demo)", code="DEMO_CORP")
+            db.add(org)
+            db.commit()
+            db.refresh(org)
+
         operator = db.query(User).filter_by(username="operator").first()
+        if not operator:
+            operator = User(org_id=org.id, username="operator", email="op@voiceshield.internal", hashed_password="test_hashed_password", full_name="SOC Operator", role="SOC_ANALYST")
+            db.add(operator)
+            db.commit()
+            db.refresh(operator)
+
         employee = db.query(User).filter_by(username="employee").first()
+        if not employee:
+            employee = User(org_id=org.id, username="employee", email="emp@voiceshield.internal", hashed_password="test_hashed_password", full_name="Employee User", role="USER")
+            db.add(employee)
+            db.commit()
+            db.refresh(employee)
+
+        cfo = db.query(ProtectedIdentity).filter_by(speaker_id="LA_0069").first()
+        if not cfo:
+            cfo = ProtectedIdentity(org_id=org.id, speaker_id="LA_0069", full_name="Rajesh Malhotra", role="Chief Financial Officer")
+            db.add(cfo)
+            db.commit()
+            db.refresh(cfo)
 
         # Enroll Speaker A reference samples for CFO
         speaker_service = SpeakerService(db=db)
-        cfo = db.query(ProtectedIdentity).filter_by(speaker_id="LA_0069").first()
 
         if SPK_A_REF1.exists() and SPK_A_REF2.exists() and SPK_A_REF3.exists():
             if not cfo.speaker_profile:

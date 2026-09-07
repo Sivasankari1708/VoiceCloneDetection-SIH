@@ -9,7 +9,7 @@ export default function IdentityPage() {
   const navigate = useNavigate();
   const { activeCall } = useActiveCall();
   const caller: CallerIdentity = activeCall?.caller ?? {
-    name: 'Direct Call',
+    name: 'Inbound Voice Call',
     claimedRole: 'Inbound Stream',
     organization: 'VoiceShield Protection',
     status: 'unverified',

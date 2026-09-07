@@ -20,7 +20,8 @@ export class AudioFileStreamer {
     fileUrl: string,
     ws: WebSocket,
     onProgress?: (progress: AudioFileStreamProgress) => void,
-    onComplete?: () => void
+    onComplete?: () => void,
+    loop: boolean = true
   ): Promise<void> {
     this.stop();
     this.isStreaming = true;
@@ -51,7 +52,7 @@ export class AudioFileStreamer {
       let currentChunk = 0;
       let totalBytesSent = 0;
 
-      console.info(`[AudioFileStreamer] Prepared ${totalChunks} real audio chunks (1s each) at 16kHz mono.`);
+      console.info(`[AudioFileStreamer] Prepared ${totalChunks} real audio chunks (1s each) at 16kHz mono (loop=${loop}).`);
 
       return new Promise<void>((resolve) => {
         this.timer = setInterval(() => {
@@ -62,19 +63,23 @@ export class AudioFileStreamer {
           }
 
           if (currentChunk >= totalChunks) {
-            this.stop();
-            if (onProgress) {
-              onProgress({
-                chunkIndex: totalChunks,
-                totalChunks,
-                bytesSent: totalBytesSent,
-                rms: 0.05,
-                completed: true,
-              });
+            if (loop) {
+              currentChunk = 0;
+            } else {
+              this.stop();
+              if (onProgress) {
+                onProgress({
+                  chunkIndex: totalChunks,
+                  totalChunks,
+                  bytesSent: totalBytesSent,
+                  rms: 0.05,
+                  completed: true,
+                });
+              }
+              if (onComplete) onComplete();
+              resolve();
+              return;
             }
-            if (onComplete) onComplete();
-            resolve();
-            return;
           }
 
           const startIdx = currentChunk * chunkSize;

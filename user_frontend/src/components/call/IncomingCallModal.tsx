@@ -4,6 +4,8 @@ import { Phone, PhoneOff, Shield } from 'lucide-react';
 import { userSocketService } from '../../services/calls/userSocketService';
 import { useAuth } from '../../context/AppContext';
 import { config } from '../../services/config';
+import { liveCallStream } from '../../services/calls/liveCallStream';
+import { WebSocketLiveCallStreamImpl } from '../../services/calls/webSocketLiveCallStream';
 import type { IncomingCallData } from '../../types';
 
 export default function IncomingCallModal() {
@@ -41,6 +43,9 @@ export default function IncomingCallModal() {
   const handleAccept = async () => {
     const session = incomingCall;
     setIncomingCall(null);
+    if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
+      liveCallStream.resumePlaybackAudio();
+    }
     try {
       const token = localStorage.getItem('voiceshield_token');
       await fetch(`${config.apiBaseUrl}/api/calls/${session.session_id}/accept`, {
@@ -105,7 +110,7 @@ export default function IncomingCallModal() {
         {/* Call Attributes */}
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-left space-y-2 text-sm">
           <div className="flex justify-between">
-            <span className="text-slate-500">Caller:</span>
+            <span className="text-slate-500">Incoming Caller ID:</span>
             <span className="font-medium text-slate-900">{incomingCall.caller_name || 'Unknown'}</span>
           </div>
           <div className="flex justify-between">
@@ -113,19 +118,19 @@ export default function IncomingCallModal() {
             <span className="font-medium text-slate-900">{claimedName}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-slate-500">Claimed Organization:</span>
+            <span className="text-slate-500">Target Organization:</span>
             <span className="font-medium text-slate-900">{incomingCall.claimed_org_name || 'Apex Financial Corp'}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-slate-500">Protection:</span>
-            <span className="font-medium text-green-700 flex items-center gap-1">
-              <Shield size={13} /> Active Defense
+            <span className="text-slate-500">Signaling Status:</span>
+            <span className="font-medium text-blue-700 flex items-center gap-1">
+              <Shield size={13} /> Pre-Call Signaling Active
             </span>
           </div>
         </div>
 
         <p className="text-xs text-slate-400">
-          VoiceShield AI pipeline will analyze audio for synthetic cloning and biometric authenticity.
+          Caller ID metadata received via telecommunication signaling. VoiceShield AI pipeline will analyze audio for synthetic cloning and biometric authenticity upon answer.
         </p>
 
         {/* Accept / Decline Buttons */}

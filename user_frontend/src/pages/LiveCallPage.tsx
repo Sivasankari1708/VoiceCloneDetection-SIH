@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   PhoneOff,
   ShieldAlert,
@@ -12,15 +12,13 @@ import {
   ChevronDown,
   ChevronUp,
   Radio,
-  Sliders,
   UserCheck,
-  Volume2,
+  PhoneForwarded,
 } from 'lucide-react';
 import { useAppContext, useActiveCall, useCallHistory } from '../context/AppContext';
 import { liveCallStream } from '../services/calls/liveCallStream';
 import { WebSocketLiveCallStreamImpl, type StreamDiagnostics } from '../services/calls/webSocketLiveCallStream';
-import type { CallEvent, CallHistoryItem, CallSession, CallTimelineEvent, ScenarioId } from '../types';
-import { DEMO_SCENARIOS } from '../mock-data/scenarios';
+import type { CallEvent, CallHistoryItem, CallSession, CallTimelineEvent } from '../types';
 import LiveVoiceWaveform from '../components/waveform/LiveVoiceWaveform';
 import CallerCard from '../components/call/CallerCard';
 import CallTimer from '../components/call/CallTimer';
@@ -31,33 +29,28 @@ import RealTimeWarningModal from '../components/call/RealTimeWarningModal';
 import RiskTimeline, { type RiskTimelineEntry } from '../components/severity/RiskTimeline';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
-import { stopCallerSpeech } from '../utils/speechSynthesis';
-
-const SCENARIOS: ScenarioId[] = [
-  'genuine_executive',
-  'ai_cloned_cfo',
-  'human_impersonator',
-  'fake_government_official',
-  'normal_conversation',
-];
 
 export default function LiveCallPage() {
   const navigate = useNavigate();
-  const { state, dispatch } = useAppContext();
+  const [searchParams] = useSearchParams();
+  const querySessionId = searchParams.get('session_id');
+  const queryCallerName = searchParams.get('caller_name');
+  const queryClaimedSpeaker = searchParams.get('claimed_speaker');
+  const isRecipientMode = !!querySessionId;
+
+  const { dispatch } = useAppContext();
   const { activeCall, setActiveCall, updateActiveCall, endActiveCall } = useActiveCall();
   const { addCallHistory } = useCallHistory();
 
   const [startTime, setStartTime] = useState<Date | null>(null);
-  const [callId, setCallId] = useState(() => `call-${Date.now()}`);
-  const [micActive, setMicActive] = useState(true);
+  const [callId] = useState(() => querySessionId || `call-${Date.now()}`);
+  const [micActive, setMicActive] = useState(!isRecipientMode);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [diagnostics, setDiagnostics] = useState<StreamDiagnostics | null>(null);
   const [warningModalOpen, setWarningModalOpen] = useState(false);
   const warningDismissedRef = useRef(false);
   const [riskHistory, setRiskHistory] = useState<RiskTimelineEntry[]>([]);
   const streamStarted = useRef(false);
-
-  const scenarioId: ScenarioId = (state.selectedScenarioId as ScenarioId) || 'genuine_executive';
 
   // 1. Maintain persistent live call event subscription throughout page lifecycle
   useEffect(() => {
@@ -66,7 +59,7 @@ export default function LiveCallPage() {
         const initialSession = event.payload as CallSession;
         setActiveCall(initialSession);
         setStartTime(new Date());
-        setMicActive(true);
+        setMicActive(!isRecipientMode);
         if (initialSession.security) {
           const initTs = new Date().toLocaleTimeString('en-GB', { hour12: false });
           setRiskHistory([
@@ -109,6 +102,9 @@ export default function LiveCallPage() {
         }
       } else if (event.type === 'waveform_update') {
         updateActiveCall({ waveformActivity: event.payload.waveformActivity });
+      } else if (event.type === 'call_ended') {
+        // Backend notified call ended
+        handleEndCall();
       }
     });
 
@@ -123,14 +119,29 @@ export default function LiveCallPage() {
       clearInterval(diagInterval);
       unsubscribe();
     };
-  }, [setActiveCall, updateActiveCall]);
+  }, [setActiveCall, updateActiveCall, isRecipientMode]);
 
   // 2. Start initial call session once on component mount
   useEffect(() => {
     if (streamStarted.current) return;
     streamStarted.current = true;
-    liveCallStream.start(scenarioId, callId);
-  }, []);
+
+    if (querySessionId) {
+      // Recipient Mode (Interface B): join backend session in receive-only mode
+      liveCallStream.start({
+        sessionId: querySessionId,
+        callerName: queryCallerName || 'Inbound Call',
+        claimedSpeakerId: queryClaimedSpeaker || undefined,
+        receiveOnly: true,
+      });
+    } else {
+      // Caller Live Mic Mode: start direct live session with microphone capture
+      liveCallStream.start({
+        callerName: 'Direct Call Stream',
+        receiveOnly: false,
+      });
+    }
+  }, [querySessionId, queryCallerName, queryClaimedSpeaker]);
 
   const handleToggleMic = useCallback(() => {
     const nextState = !micActive;
@@ -138,39 +149,14 @@ export default function LiveCallPage() {
     liveCallStream.setMicEnabled(nextState);
   }, [micActive]);
 
-  const handleSelectScenario = useCallback(
-    (newScenario: ScenarioId) => {
-      // 1. Stop active simulation & speech audio
-      stopCallerSpeech();
-      liveCallStream.stop();
-
-      // 2. Persist scenario in state and localStorage
-      dispatch({ type: 'SET_SCENARIO', payload: newScenario });
-      localStorage.setItem('voiceshield_selected_scenario', newScenario);
-
-      // 3. Reset call state for new simulation
-      const newCallId = `call-${Date.now()}`;
-      setCallId(newCallId);
-      setStartTime(new Date());
-      setRiskHistory([]);
-      warningDismissedRef.current = false;
-      setWarningModalOpen(false);
-
-      // 4. Start new scenario simulation immediately
-      liveCallStream.start(newScenario, newCallId);
-    },
-    [dispatch]
-  );
-
   const handleEndCall = useCallback(() => {
-    stopCallerSpeech();
-    liveCallStream.stop();
+    liveCallStream.terminate('NORMAL_HANGUP');
 
     if (activeCall && startTime) {
       const now = new Date();
       const duration = Math.floor((now.getTime() - startTime.getTime()) / 1000);
       const historyItem: CallHistoryItem = {
-        id: callId,
+        id: querySessionId || callId,
         caller: activeCall.caller,
         source: activeCall.source,
         startTime,
@@ -204,9 +190,9 @@ export default function LiveCallPage() {
             message: `A ${activeCall.security.severity.toLowerCase()} risk call was analyzed and ended.`,
             read: false,
             createdAt: new Date(),
-            callId,
+            callId: querySessionId || callId,
             actionLabel: 'View details',
-            actionRoute: `/history/${callId}`,
+            actionRoute: `/history/${querySessionId || callId}`,
           },
         });
       }
@@ -214,14 +200,16 @@ export default function LiveCallPage() {
 
     endActiveCall();
     navigate('/history');
-  }, [activeCall, startTime, callId, addCallHistory, endActiveCall, navigate, dispatch]);
+  }, [activeCall, startTime, callId, querySessionId, addCallHistory, endActiveCall, navigate, dispatch]);
 
   if (!activeCall) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[70vh] p-4 text-center">
         <div className="w-12 h-12 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
         <h2 className="text-lg font-semibold text-slate-800">Connecting to VoiceShield Protection...</h2>
-        <p className="text-slate-500 text-sm mt-1 max-w-sm">Initializing microphone audio stream and AI detection engine.</p>
+        <p className="text-slate-500 text-sm mt-1 max-w-sm">
+          {isRecipientMode ? 'Attaching to live backend session telemetry...' : 'Initializing microphone audio stream and AI detection engine.'}
+        </p>
         <div className="mt-6 flex gap-3">
           <Button variant="outline" size="sm" onClick={() => navigate('/home')}>
             Cancel
@@ -238,7 +226,7 @@ export default function LiveCallPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20">
-      {/* 5. Real-Time User Warning Modal */}
+      {/* Real-Time User Warning Modal */}
       <RealTimeWarningModal
         isOpen={warningModalOpen && (isCritical || isHigh)}
         severity={security.severity}
@@ -272,7 +260,12 @@ export default function LiveCallPage() {
             {startTime && <CallTimer startTime={startTime} active />}
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
-            {micActive ? (
+            {isRecipientMode ? (
+              <span className="flex items-center gap-1 text-blue-700 font-medium">
+                <Radio size={12} className="text-blue-600 animate-pulse" />
+                Live Monitoring (Receive-Only)
+              </span>
+            ) : micActive ? (
               <span className="flex items-center gap-1 text-green-700 font-medium">
                 <Mic size={12} className="text-green-600 animate-pulse" />
                 Mic Live (16kHz PCM)
@@ -284,21 +277,24 @@ export default function LiveCallPage() {
               </span>
             )}
             <span className="text-slate-300">•</span>
-            <span className="text-slate-600 font-medium truncate">Scenario: {DEMO_SCENARIOS[scenarioId]?.name}</span>
+            <span className="text-slate-600 font-medium truncate">
+              {isRecipientMode ? 'Mode: Recipient Live Monitoring' : 'Mode: Direct Live Stream'}
+            </span>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Start/Stop Microphone Button */}
-          <Button
-            variant={micActive ? 'outline' : 'secondary'}
-            size="sm"
-            icon={micActive ? <MicOff size={14} /> : <Mic size={14} />}
-            onClick={handleToggleMic}
-            title={micActive ? 'Mute microphone' : 'Unmute microphone'}
-          >
-            <span className="hidden sm:inline">{micActive ? 'Mute' : 'Unmute'}</span>
-          </Button>
+          {!isRecipientMode && (
+            <Button
+              variant={micActive ? 'outline' : 'secondary'}
+              size="sm"
+              icon={micActive ? <MicOff size={14} /> : <Mic size={14} />}
+              onClick={handleToggleMic}
+              title={micActive ? 'Mute microphone' : 'Unmute microphone'}
+            >
+              <span className="hidden sm:inline">{micActive ? 'Mute' : 'Unmute'}</span>
+            </Button>
+          )}
 
           {/* End Call Button */}
           <Button variant="danger" size="sm" icon={<PhoneOff size={14} />} onClick={handleEndCall}>
@@ -308,44 +304,48 @@ export default function LiveCallPage() {
       </div>
 
       <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
-        {/* 2. Attack Simulator / Scenario Switcher Bar */}
-        <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
-              <Sliders size={14} className="text-blue-600" />
-              Demo Attack Scenario Simulator
-            </span>
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                <Volume2 size={12} className="text-emerald-600 animate-pulse" />
-                <span>Audio Playback Active</span>
-              </span>
-              <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                Active: {DEMO_SCENARIOS[scenarioId]?.name}
-              </span>
+        {/* 2. System Status / Mode Banner */}
+        {isRecipientMode ? (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3.5 shadow-sm">
+            <div className="flex items-start gap-2.5">
+              <div className="p-1 bg-blue-100 rounded text-blue-700 mt-0.5">
+                <Radio size={16} className="animate-pulse" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-blue-900 uppercase tracking-wider">
+                    Recipient Live Call Protection Active
+                  </span>
+                  <span className="text-[11px] font-semibold text-blue-700 bg-blue-100/80 px-2 py-0.5 rounded border border-blue-300 font-mono">
+                    {querySessionId ? `${querySessionId.slice(0, 16)}...` : 'Active'}
+                  </span>
+                </div>
+                <p className="text-xs text-blue-800 mt-1 leading-relaxed">
+                  Connected to active call session. Voice clone detection, biometric authenticity scores, and real-time Whisper transcription telemetry are being received directly from the AI detection pipeline.
+                </p>
+                <div className="mt-2 flex items-center gap-2 text-[11px] text-blue-700 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                  <span>Direct analysis streaming is active. (Peer-to-peer audio relay is not enabled by backend; AI telemetry is mirrored live.)</span>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="flex gap-1.5 overflow-x-auto pb-1">
-            {SCENARIOS.map((sid) => {
-              const isSelected = sid === scenarioId;
-              const sc = DEMO_SCENARIOS[sid];
-              return (
-                <button
-                  key={sid}
-                  onClick={() => handleSelectScenario(sid)}
-                  className={`text-xs px-3.5 py-1.5 rounded-lg font-medium whitespace-nowrap transition-all border ${
-                    isSelected
-                      ? 'bg-blue-600 text-white border-blue-700 shadow-sm font-semibold'
-                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                  }`}
-                  title={sc?.description}
-                >
-                  {sc?.name || sid}
-                </button>
-              );
-            })}
+        ) : (
+          <div className="bg-slate-100 border border-slate-200 rounded-xl p-3.5 shadow-sm flex items-center justify-between gap-3">
+            <div>
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <Radio size={14} className="text-emerald-600" />
+                Live Audio Capture Active
+              </span>
+              <p className="text-xs text-slate-600 mt-0.5">
+                Microphone audio (16kHz mono PCM) is streaming live to the VoiceShield pipeline. Want to test cloned audio files or place an outgoing call to a specific user?
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => navigate('/sender')} icon={<PhoneForwarded size={14} />}>
+              Open Call Sender
+            </Button>
           </div>
-        </div>
+        )}
 
         {/* 3. Live Risk Monitor (Continuous Dynamic Display) */}
         <LiveRiskMonitor
@@ -378,7 +378,7 @@ export default function LiveCallPage() {
               <div className="flex-1 flex flex-col justify-between">
                 {transcript.length === 0 ? (
                   <div className="py-8 text-center text-slate-400 text-sm italic">
-                    Listening for conversation... The caller will speak shortly, or you can speak into your microphone.
+                    Listening for conversation... Speech will appear here as Whisper AI transcribes incoming voice chunks.
                   </div>
                 ) : (
                   <TranscriptDisplay segments={transcript} maxHeight="220px" />
@@ -401,7 +401,7 @@ export default function LiveCallPage() {
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
                   <Radio size={13} className={isSpeaking ? 'text-green-500 animate-pulse' : 'text-slate-400'} />
-                  Microphone Stream & Audio Level
+                  Audio Stream & Energy Level
                 </span>
                 <span className="text-xs text-slate-500 font-mono">
                   {diagnostics ? `RMS: ${diagnostics.rms.toFixed(3)}` : isSpeaking ? 'Speaking' : 'Listening...'}
@@ -418,11 +418,11 @@ export default function LiveCallPage() {
                 />
               </div>
               <div className="text-[11px] text-slate-500 text-center flex items-center justify-center gap-2">
-                <span className={micActive ? 'text-emerald-700 font-medium' : 'text-amber-700 font-medium'}>
-                  {micActive ? '● Mic active (16kHz PCM)' : '○ Mic muted'}
+                <span className={micActive ? 'text-emerald-700 font-medium' : 'text-slate-600 font-medium'}>
+                  {isRecipientMode ? '● Recipient Monitor' : micActive ? '● Mic active (16kHz PCM)' : '○ Mic muted'}
                 </span>
                 <span>•</span>
-                <span className="text-slate-500">FastAPI Pipeline</span>
+                <span className="text-slate-500">FastAPI ML Pipeline</span>
               </div>
             </Card>
 

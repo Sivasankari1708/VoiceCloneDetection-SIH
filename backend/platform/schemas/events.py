@@ -24,6 +24,9 @@ from pydantic import BaseModel, Field
 
 class WebSocketEventType(str, Enum):
     CALL_STARTED = "CALL_STARTED"
+    INCOMING_CALL = "INCOMING_CALL"
+    CALL_ACCEPTED = "CALL_ACCEPTED"
+    CALL_REJECTED = "CALL_REJECTED"
     RISK_UPDATE = "RISK_UPDATE"
     USER_SECURITY_ALERT = "USER_SECURITY_ALERT"
     ORGANIZATION_SECURITY_ALERT = "ORGANIZATION_SECURITY_ALERT"
@@ -111,6 +114,7 @@ class OrganizationSecurityAlertPayload(BaseModel):
     scenario: str
     risk_score: float
     claimed_identity: Optional[str] = None
+    target_individual: Optional[str] = None
     synthetic_probability: Optional[float] = None
     speaker_similarity: Optional[float] = None
     intent: Optional[str] = None
@@ -129,6 +133,7 @@ class IncidentEventPayload(BaseModel):
     status: str
     risk_score: float
     claimed_identity: Optional[str] = None
+    target_individual: Optional[str] = None
     intent: Optional[str] = None
     reasons: List[str] = []
     recommended_action: str

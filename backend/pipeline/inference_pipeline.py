@@ -313,7 +313,7 @@ class InferencePipeline:
 
         # ── Stage 3c: faster-whisper Speech-to-Text ──────────────────────────
         t_asr_start = time.perf_counter()
-        asr_res: ASRResult = self.whisper_asr.transcribe(waveform, vad_filter=False)
+        asr_res: ASRResult = self.whisper_asr.transcribe(waveform, vad_filter=True)
         timings["whisper_asr_ms"] = (time.perf_counter() - t_asr_start) * 1000.0
 
         transcript_text = asr_res.transcript

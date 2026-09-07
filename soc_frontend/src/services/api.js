@@ -239,7 +239,7 @@ class ApiService {
     const claimedIdentityName =
       x.claimed_identity ??
       (typeof x.claimedIdentity === 'string' ? x.claimedIdentity : x.claimedIdentity?.name) ??
-      'CFO Office (David Vance)';
+      'Rajesh Malhotra (CFO)';
 
     const scenario =
       x.scenario ??
@@ -251,14 +251,20 @@ class ApiService {
     const synthProb = x.synthetic_probability ?? x.syntheticProbability ?? (riskScore ? riskScore / 100 : 0.85);
     const spkSim = x.speaker_similarity ?? x.speakerSimilarity ?? 0.38;
 
+    const targetIndividualName =
+      x.target_individual ??
+      x.target_name ??
+      (typeof x.target === 'string' && x.target !== 'Unknown' ? x.target : (typeof x.target === 'object' && x.target?.name ? x.target.name : null)) ??
+      'Sreya Sengupta (Citizen)';
+
     // Structured target object
-    const target = typeof x.target === 'object' && x.target !== null
+    const target = typeof x.target === 'object' && x.target !== null && !x.target_individual
       ? x.target
       : {
-          name: typeof x.target === 'string' && x.target !== 'Unknown' ? x.target : (x.target_name || 'Alice Johnson (Finance Lead)'),
-          role: 'Accounts & Treasury Manager',
-          department: 'Finance',
-          endpointId: x.session_id ? `SIP-${x.session_id.slice(-6)}` : 'EXT-4402'
+          name: targetIndividualName,
+          role: 'Citizen / Target Individual',
+          department: 'External Recipient',
+          endpointId: x.session_id ? `CALL-${x.session_id.slice(-6)}` : 'EXT-CALL'
         };
 
     // Structured claimed identity object
@@ -267,7 +273,7 @@ class ApiService {
       : {
           name: claimedIdentityName,
           role: 'Chief Financial Officer (CFO)',
-          department: 'Executive Management',
+          department: 'Apex Executive Leadership',
           isEnrolled: true
         };
 
@@ -312,7 +318,7 @@ class ApiService {
       claimedIdentity,
       attackType: scenario,
       scenario,
-      assignedAnalyst: x.assigned_analyst ?? x.assignedAnalyst ?? (x.operator_id || 'Sarah Chen (SOC Lead)'),
+      assignedAnalyst: x.assigned_analyst ?? x.assignedAnalyst ?? (x.operator_id || 'Priya Nair (SOC Operator)'),
       callerNumber: x.caller_number ?? x.callerNumber ?? '+1-555-0199',
       duration: x.duration ?? '1m 24s',
       channel: x.channel ?? 'SIP-Trunk-01',

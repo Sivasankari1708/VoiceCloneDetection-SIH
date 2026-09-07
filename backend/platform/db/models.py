@@ -71,7 +71,7 @@ class Organization(Base):
     # Relationships
     users = relationship("User", back_populates="organization", cascade="all, delete-orphan")
     protected_identities = relationship("ProtectedIdentity", back_populates="organization", cascade="all, delete-orphan")
-    call_sessions = relationship("CallSession", back_populates="organization", cascade="all, delete-orphan")
+    call_sessions = relationship("CallSession", back_populates="organization", cascade="all, delete-orphan", foreign_keys="[CallSession.org_id]")
     incidents = relationship("SecurityIncident", back_populates="organization", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="organization", cascade="all, delete-orphan")
     policies = relationship("SecurityPolicy", back_populates="organization", uselist=False, cascade="all, delete-orphan")
@@ -95,7 +95,7 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(String(64), primary_key=True, default=generate_uuid)
-    org_id = Column(String(64), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id = Column(String(64), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
     username = Column(String(100), unique=True, nullable=False, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
@@ -107,7 +107,7 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
     organization = relationship("Organization", back_populates="users")
-    call_sessions = relationship("CallSession", back_populates="user")
+    call_sessions = relationship("CallSession", back_populates="user", foreign_keys="[CallSession.user_id]")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -214,12 +214,15 @@ class CallSession(Base):
     __tablename__ = "call_sessions"
 
     session_id = Column(String(128), primary_key=True)
-    org_id = Column(String(64), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id = Column(String(64), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    recipient_user_id = Column(String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     caller_number = Column(String(64), nullable=True)
     caller_name = Column(String(255), nullable=True)
     claimed_identity_id = Column(String(64), ForeignKey("protected_identities.id", ondelete="SET NULL"), nullable=True)
     claimed_speaker_id = Column(String(128), nullable=True)
+    claimed_org_id = Column(String(64), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
+    claimed_org_name = Column(String(255), nullable=True)
 
     # Status: ACTIVE | ENDED | TERMINATED_BY_SECURITY
     status = Column(String(32), default="ACTIVE", nullable=False, index=True)
@@ -240,9 +243,11 @@ class CallSession(Base):
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
     # Relationships
-    organization = relationship("Organization", back_populates="call_sessions")
-    user = relationship("User", back_populates="call_sessions")
-    claimed_identity = relationship("ProtectedIdentity")
+    organization = relationship("Organization", back_populates="call_sessions", foreign_keys=[org_id])
+    claimed_organization = relationship("Organization", foreign_keys=[claimed_org_id])
+    user = relationship("User", back_populates="call_sessions", foreign_keys=[user_id])
+    recipient = relationship("User", foreign_keys=[recipient_user_id])
+    claimed_identity = relationship("ProtectedIdentity", foreign_keys=[claimed_identity_id])
     risk_events = relationship("RiskEvent", back_populates="call_session", cascade="all, delete-orphan", order_by="RiskEvent.chunk_id")
     incidents = relationship("SecurityIncident", back_populates="call_session", cascade="all, delete-orphan")
     actions = relationship("SecurityAction", back_populates="call_session", cascade="all, delete-orphan")
@@ -252,9 +257,12 @@ class CallSession(Base):
             "session_id": self.session_id,
             "org_id": self.org_id,
             "user_id": self.user_id,
+            "recipient_user_id": self.recipient_user_id,
             "caller_number": self.caller_number,
             "caller_name": self.caller_name,
             "claimed_speaker_id": self.claimed_speaker_id,
+            "claimed_org_id": self.claimed_org_id,
+            "claimed_org_name": self.claimed_org_name,
             "status": self.status,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "end_time": self.end_time.isoformat() if self.end_time else None,
@@ -358,6 +366,7 @@ class SecurityIncident(Base):
     severity = Column(String(32), default="HIGH", nullable=False, index=True)  # HIGH, CRITICAL
     scenario = Column(String(64), nullable=False)  # AI_CLONE_ENROLLED_SPEAKER, UNKNOWN_AI_VOICE, etc.
     claimed_identity = Column(String(255), nullable=True)
+    target_individual = Column(String(255), nullable=True)
 
     # Key forensic snapshots at time of incident
     current_risk_score = Column(Float, default=0.0, nullable=False)
@@ -404,6 +413,7 @@ class SecurityIncident(Base):
             "severity": self.severity,
             "scenario": self.scenario,
             "claimed_identity": self.claimed_identity,
+            "target_individual": self.target_individual,
             "risk_score": self.current_risk_score,
             "synthetic_probability": self.synthetic_probability,
             "speaker_similarity": self.speaker_similarity,

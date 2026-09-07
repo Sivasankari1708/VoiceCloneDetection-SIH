@@ -4,11 +4,10 @@ import {
   ArrowLeft, Phone, MessageSquare, Shield, CheckCircle, XCircle, Loader2, PhoneOff, ShieldAlert
 } from 'lucide-react';
 import { useActiveCall, useAppContext } from '../context/AppContext';
-import { MOCK_CALLERS } from '../mock-data';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import SecurityScoreDisplay from '../components/severity/SecurityScoreDisplay';
-import type { VerificationMethod } from '../types';
+import type { VerificationMethod, CallerIdentity } from '../types';
 
 type VStep = 'confirm' | 'choose' | 'verifying' | 'success' | 'failed';
 
@@ -22,7 +21,13 @@ export default function VerificationPage() {
   const navigate = useNavigate();
   const { activeCall, updateActiveCall } = useActiveCall();
   const { dispatch } = useAppContext();
-  const caller = activeCall?.caller ?? MOCK_CALLERS.rajesh_kumar;
+  const caller: CallerIdentity = activeCall?.caller ?? {
+    name: 'Current Caller',
+    claimedRole: 'Caller',
+    organization: 'Protected Entity',
+    status: 'unverified',
+    statusMessage: 'Caller verification pending',
+  };
 
   const [step, setStep] = useState<VStep>('confirm');
   const [selectedMethod, setSelectedMethod] = useState<VerificationMethod | null>(null);

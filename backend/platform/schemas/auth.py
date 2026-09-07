@@ -23,7 +23,7 @@ class LoginRequest(BaseModel):
 
 class UserDto(BaseModel):
     id: str
-    org_id: str
+    org_id: Optional[str] = None
     username: str
     email: str
     full_name: str

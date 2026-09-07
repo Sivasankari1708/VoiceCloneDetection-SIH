@@ -32,6 +32,8 @@ class AlertDispatcher:
         self._call_sockets: Dict[str, Set[WebSocket]] = {}
         # org_id -> Set of WebSockets (organization security operator dashboards)
         self._org_sockets: Dict[str, Set[WebSocket]] = {}
+        # user_id -> Set of WebSockets (user-scoped notification feed)
+        self._user_sockets: Dict[str, Set[WebSocket]] = {}
         self._lock = asyncio.Lock()
 
     @classmethod
@@ -129,3 +131,49 @@ class AlertDispatcher:
             async with self._lock:
                 if org_id in self._org_sockets:
                     self._org_sockets[org_id].difference_update(dead)
+
+    # ── User Notification Feed Connections (Per-User) ──────────────────
+
+    async def register_user_socket(self, user_id: str, websocket: WebSocket) -> None:
+        """Register a user client WebSocket for personal notifications (incoming calls)."""
+        async with self._lock:
+            if user_id not in self._user_sockets:
+                self._user_sockets[user_id] = set()
+            self._user_sockets[user_id].add(websocket)
+            log.info("[AlertDispatcher] Registered user WebSocket for user '%s'. Total: %d", user_id, len(self._user_sockets[user_id]))
+
+    async def unregister_user_socket(self, user_id: str, websocket: WebSocket) -> None:
+        """Unregister a user notification WebSocket."""
+        async with self._lock:
+            if user_id in self._user_sockets:
+                self._user_sockets[user_id].discard(websocket)
+                if not self._user_sockets[user_id]:
+                    del self._user_sockets[user_id]
+            log.info("[AlertDispatcher] Unregistered user WebSocket for user '%s'.", user_id)
+
+    async def send_to_user(self, user_id: str, message: Dict[str, Any]) -> None:
+        """
+        Send a real-time event (e.g. INCOMING_CALL or CALL_ENDED) strictly to the specified user.
+        """
+        sockets = set()
+        async with self._lock:
+            if user_id in self._user_sockets:
+                sockets = set(self._user_sockets[user_id])
+
+        if not sockets:
+            log.debug("[AlertDispatcher] No active user client connected for user '%s'.", user_id)
+            return
+
+        payload = json.dumps(message)
+        dead = set()
+        for ws in sockets:
+            try:
+                await ws.send_text(payload)
+            except Exception as exc:
+                log.debug("[AlertDispatcher] Failed sending to user socket %s: %s", user_id, exc)
+                dead.add(ws)
+
+        if dead:
+            async with self._lock:
+                if user_id in self._user_sockets:
+                    self._user_sockets[user_id].difference_update(dead)

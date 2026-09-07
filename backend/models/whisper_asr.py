@@ -39,7 +39,7 @@ log = get_logger(__name__)
 
 SAMPLE_RATE: int = 16_000
 MIN_AUDIO_SAMPLES: int = 1_600  # 0.1 seconds at 16 kHz
-DEFAULT_MODEL_SIZE: str = "tiny"
+DEFAULT_MODEL_SIZE: str = "base"
 
 
 @dataclass(frozen=True)
@@ -373,7 +373,12 @@ class WhisperASR:
             language=effective_language,
             task=task,
             condition_on_previous_text=False,
-            initial_prompt="This is an English business voice phone call conversation." if effective_language == "en" else None,
+            no_speech_threshold=0.6,
+            log_prob_threshold=-1.0,
+            compression_ratio_threshold=2.4,
+            hallucination_silence_threshold=2.0,
+            vad_filter=True,
+            initial_prompt="OTP, verification code, KYC, bank account, transfer, security, password." if effective_language == "en" else None,
         )
 
         segment_list: List[Dict[str, Any]] = []
@@ -400,14 +405,37 @@ class WhisperASR:
             float(np.mean(no_speech_probs)) if no_speech_probs else (1.0 if not full_transcript else 0.0)
         )
 
-        # Silence artifact & common hallucination suppression
-        HALLUCINATION_PHRASES = {
+        # Silence artifact & common YouTube/social hallucination suppression
+        HALLUCINATION_SUBSTRINGS = (
+            "watching this video",
+            "next video",
+            "thanks for watching",
+            "thank you for watching",
+            "thank you so much for watching",
+            "see you in the next",
+            "see you next time",
+            "subtitles by",
+            "like and subscribe",
+            "please subscribe",
+            "now you know",
+            "english business voice phone call",
+            "english business phone call",
+            "i'll see you in the next video",
+            "i don't know if this is fun",
+            "this is so weird",
+            "i have recently sent a year off",
+            "i've been involved with her",
+        )
+        clean_lower = full_transcript.lower().strip()
+        is_hallucination = any(pat in clean_lower for pat in HALLUCINATION_SUBSTRINGS)
+        is_short_courtesy = clean_lower in {
             "thank you.", "thank you very much.", "thanks for watching.", "thanks for watching!",
             "see you in the next video.", "subtitles by", "bye-bye.", "bye!",
-            "thank you", "thanks.", "watching", "see you next time."
+            "thank you", "thanks.", "watching", "see you next time.", "now you know.",
+            "now you know", "i noticed.", "i noticed",
         }
-        if full_transcript.lower().strip() in HALLUCINATION_PHRASES and (avg_no_speech_prob > 0.3 or len(waveform) <= 16000):
-            log.debug("Suppressed Whisper silence hallucination: '%s'", full_transcript)
+        if is_hallucination or (is_short_courtesy and (avg_no_speech_prob > 0.25 or len(waveform) <= 16000)):
+            log.info("Suppressed Whisper hallucination: '%s'", full_transcript)
             full_transcript = ""
             segment_list = []
 

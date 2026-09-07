@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useAuth, useNotifications, useActiveCall } from '../../context/AppContext';
 import { authService } from '../../services/auth/authService';
+import IncomingCallModal from '../call/IncomingCallModal';
 
 interface AppShellProps {
   children: ReactNode;
@@ -189,6 +190,9 @@ export default function AppShell({ children }: AppShellProps) {
           {children}
         </main>
       </div>
+
+      {/* Global incoming call listener and alert modal */}
+      <IncomingCallModal />
     </div>
   );
 }

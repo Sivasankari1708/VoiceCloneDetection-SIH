@@ -179,7 +179,7 @@ export function mapBackendRiskUpdate(
     const idExists = existingTranscript.some(t => t.id === `seg-${update.chunk_id}`);
     if (!isExactRepeatOfLast && !idExists) {
       transcriptSegment = {
-        id: `seg-${update.chunk_id}-${Date.now()}`,
+        id: `seg-${update.chunk_id}`,
         speaker: 'caller',
         text: chunkText,
         timestamp: Math.max(0, Date.now() - callStartTime.getTime()),

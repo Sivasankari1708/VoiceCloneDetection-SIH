@@ -1,16 +1,22 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, Settings, Shield, Phone, KeyRound, Edit } from 'lucide-react';
 import { useAuth, useCallHistory } from '../context/AppContext';
 import { authService } from '../services/auth/authService';
-import { MOCK_CALL_HISTORY } from '../mock-data';
+import { fetchCallHistory } from '../services/calls/callHistoryService';
 import Card from '../components/ui/Card';
+import type { CallHistoryItem } from '../types';
 
 export default function ProfilePage() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { callHistory } = useCallHistory();
+  const [backendCalls, setBackendCalls] = useState<CallHistoryItem[]>([]);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchCallHistory().then((calls) => setBackendCalls(calls)).catch(() => {});
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -23,7 +29,7 @@ export default function ProfilePage() {
     navigate('/login');
   };
 
-  const totalCalls = callHistory.length + MOCK_CALL_HISTORY.length;
+  const totalCalls = callHistory.length + backendCalls.filter(b => !callHistory.find(c => c.id === b.id)).length;
 
   if (!user) return null;
 

@@ -5,130 +5,143 @@ import { config } from '../config';
 interface LoginResponse {
   access_token: string;
   token_type: string;
-  user?: BackendUser;
-}
-
-interface MeResponse {
-  id: string;
-  username: string;
-  email: string;
-  full_name?: string;
-  role?: string;
-  organization_id?: string;
+  expires_in_minutes: number;
+  user: BackendUser;
 }
 
 interface BackendUser {
   id: string;
+  org_id: string;
   username: string;
   email: string;
-  full_name?: string;
-  role?: string;
-  organization_id?: string;
+  full_name: string;
+  role: string;
+  is_active: boolean;
+  created_at?: string;
 }
 
-function mapBackendUser(raw: MeResponse | BackendUser): User {
-  const displayName = raw.full_name || raw.username || 'User';
-  return {
-    id: raw.id,
-    name: displayName,
-    email: raw.email || `${raw.username}@voiceshield.app`,
-    employeeId: 'ACC-' + raw.id.slice(0, 6).toUpperCase(),
-    organization: 'Personal Protection',
-    role: raw.role === 'ADMIN' ? 'Admin' : 'Personal User',
-    avatarInitials: displayName.slice(0, 2).toUpperCase(),
-    accountStatus: 'active',
-  };
+interface OrgResponse {
+  id: string;
+  name: string;
+  code: string;
+  is_active: boolean;
 }
 
 export class RealAuthService implements AuthService {
   private currentUser: User | null = null;
   private token: string | null = null;
-  private demoOtp: string | null = null;
 
-  async sendOtp(email: string): Promise<{ success: boolean }> {
-    // Generate 6-digit demo OTP for the UI
-    this.demoOtp = String(Math.floor(100000 + Math.random() * 900000));
-    console.info(`[VoiceShield] Verification code generated for: ${email}. Code: ${this.demoOtp}`);
+  async sendOtp(_identifier: string): Promise<{ success: boolean }> {
+    // Backend uses direct password authentication.
+    // For passwordless UI convenience, returns success.
     return { success: true };
   }
 
   async verifyOtp(usernameInput: string, passwordOrOtp: string): Promise<{ token: string; user: User }> {
-    // Normalize username: extract from email if provided
-    let username = usernameInput.includes('@')
-      ? usernameInput.split('@')[0].trim().toLowerCase()
-      : usernameInput.trim().toLowerCase();
+    const rawInput = usernameInput.trim();
+    let username = rawInput;
+    let password = passwordOrOtp.trim();
 
-    // Default to seeded user if generic identifier entered
-    if (!['admin', 'operator', 'employee'].includes(username)) {
-      username = 'employee';
+    // If only an OTP or empty password was provided, map to standard credentials
+    if (!password || /^\d{6}$/.test(password)) {
+      const lower = username.toLowerCase();
+      if (lower.includes('attacker')) {
+        password = 'attacker123';
+      } else if (lower.includes('sreya')) {
+        password = 'sreya123';
+      } else if (lower.includes('caller')) {
+        password = 'caller123';
+      } else if (lower.includes('operator')) {
+        password = 'operator123';
+      } else {
+        const cleanName = username.includes('@') ? username.split('@')[0] : username;
+        password = `${cleanName}123`;
+      }
     }
 
-    // Map 6-digit OTP or default to seeded backend password
-    let password = passwordOrOtp;
-    if (!password || /^\d{6}$/.test(password) || password === this.demoOtp) {
-      password = `${username}123`; // e.g. employee123
-    }
-
+    let res: Response;
     try {
-      const res = await fetch(`${config.apiBaseUrl}/api/auth/login`, {
+      res = await fetch(`${config.apiBaseUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
+        signal: AbortSignal.timeout(5000),
       });
-
-      if (res.ok) {
-        const data: LoginResponse = await res.json();
-        this.token = data.access_token;
-        localStorage.setItem('voiceshield_token', data.access_token);
-        this.demoOtp = null;
-
-        // Fetch user profile with JWT
-        let backendUser: User;
-        try {
-          const meRes = await fetch(`${config.apiBaseUrl}/api/auth/me`, {
-            headers: { Authorization: `Bearer ${this.token}` },
-          });
-          if (meRes.ok) {
-            const me: MeResponse = await meRes.json();
-            backendUser = mapBackendUser(me);
-          } else {
-            backendUser = mapBackendUser(
-              data.user ?? { id: 'user_001', username, email: usernameInput }
-            );
-          }
-        } catch {
-          backendUser = mapBackendUser(
-            data.user ?? { id: 'user_001', username, email: usernameInput }
-          );
-        }
-
-        this.currentUser = backendUser;
-        localStorage.setItem('voiceshield_user', JSON.stringify(backendUser));
-        return { token: this.token, user: this.currentUser };
+    } catch (err: any) {
+      if (err.name === 'TimeoutError') {
+        throw new Error(`Connection timeout: Unable to reach VoiceShield backend at ${config.apiBaseUrl}`);
       }
-    } catch (netErr) {
-      console.warn('[VoiceShield] Backend login request failed, using instant local sign-in:', netErr);
+      throw new Error(`Network error: Unable to connect to backend at ${config.apiBaseUrl}`);
     }
 
-    // Fallback: Authenticate locally so an ordinary user is never blocked
-    const cleanName = usernameInput.includes('@')
-      ? usernameInput.split('@')[0]
-      : usernameInput || 'Verified User';
-    const fallbackUser: User = {
-      id: 'usr_' + Date.now().toString(36),
-      name: cleanName.charAt(0).toUpperCase() + cleanName.slice(1),
-      email: usernameInput.includes('@') ? usernameInput : `${usernameInput || 'user'}@voiceshield.app`,
-      employeeId: 'SHIELD-' + Math.floor(1000 + Math.random() * 9000),
-      organization: 'Personal Protection',
-      role: 'User',
-      avatarInitials: cleanName.slice(0, 2).toUpperCase(),
-      accountStatus: 'active',
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({ detail: 'Authentication failed' }));
+      throw new Error(errData.detail || `Login failed (HTTP ${res.status})`);
+    }
+
+    const data: LoginResponse = await res.json();
+    this.token = data.access_token;
+    localStorage.setItem('voiceshield_token', data.access_token);
+
+    // Fetch user profile and organization details
+    const user = await this.fetchUserProfile(data.access_token, data.user);
+    this.currentUser = user;
+    localStorage.setItem('voiceshield_user', JSON.stringify(user));
+
+    return { token: this.token, user };
+  }
+
+  private async fetchUserProfile(token: string, fallbackBackendUser?: BackendUser): Promise<User> {
+    let backendUser = fallbackBackendUser;
+    try {
+      const meRes = await fetch(`${config.apiBaseUrl}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(4000),
+      });
+      if (meRes.ok) {
+        backendUser = await meRes.json();
+      }
+    } catch {
+      // use fallback
+    }
+
+    if (!backendUser) {
+      throw new Error('Failed to retrieve user profile from backend.');
+    }
+
+    // Fetch organization name
+    let orgName = 'Protected Organization';
+    try {
+      const orgRes = await fetch(`${config.apiBaseUrl}/api/organizations/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (orgRes.ok) {
+        const orgData: OrgResponse = await orgRes.json();
+        if (orgData.name) orgName = orgData.name;
+      }
+    } catch {
+      // ignore
+    }
+
+    const displayName = backendUser.full_name || backendUser.username;
+    const isCitizen = !backendUser.org_id || backendUser.role === 'USER';
+    const isCaller = backendUser.role === 'CALLER' || backendUser.role === 'ATTACKER';
+    return {
+      id: backendUser.id,
+      name: displayName,
+      email: backendUser.email,
+      employeeId: isCaller
+        ? 'CALLER-' + backendUser.id.slice(-6).toUpperCase()
+        : isCitizen
+        ? 'CITIZEN-' + backendUser.id.slice(-6).toUpperCase()
+        : 'EMP-' + backendUser.id.slice(-6).toUpperCase(),
+      organization: isCaller ? 'External Network' : isCitizen ? 'Citizen Protection' : orgName,
+      // Store authoritative backend role directly: CALLER | USER | SECURITY_OPERATOR | ADMIN
+      role: backendUser.role,
+      avatarInitials: displayName.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase() || (isCaller ? 'AT' : 'SG'),
+      accountStatus: backendUser.is_active ? 'active' : 'suspended',
     };
-    this.token = `local_token_${Date.now()}`;
-    this.currentUser = fallbackUser;
-    localStorage.setItem('voiceshield_token', this.token);
-    localStorage.setItem('voiceshield_user', JSON.stringify(fallbackUser));
-    return { token: this.token, user: fallbackUser };
   }
 
   getCurrentUser(): User | null {
@@ -151,23 +164,19 @@ export class RealAuthService implements AuthService {
   async ensureToken(): Promise<string> {
     const token = this.getToken();
     if (token) return token;
-    try {
-      const res = await this.verifyOtp('employee', 'employee123');
-      return res.token;
-    } catch {
-      return '';
-    }
+    return '';
   }
 
   async logout(): Promise<void> {
     this.currentUser = null;
     this.token = null;
-    this.demoOtp = null;
     localStorage.removeItem('voiceshield_token');
     localStorage.removeItem('voiceshield_user');
   }
 
   getDemoOtp(): string | null {
-    return this.demoOtp;
+    return '123456';
   }
 }
+
+export const realAuthService = new RealAuthService();

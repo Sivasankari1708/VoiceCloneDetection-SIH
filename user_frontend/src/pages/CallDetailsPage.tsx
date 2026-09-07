@@ -1,14 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Clock, Phone, AlertCircle, CheckCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { useCallHistory } from '../context/AppContext';
-import { MOCK_CALL_HISTORY } from '../mock-data';
 import SeverityBadge from '../components/severity/SeverityBadge';
 import ConversationSignalTag from '../components/call/ConversationSignalTag';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-import type { CallTimelineEvent } from '../types';
+import type { CallHistoryItem, CallTimelineEvent, TranscriptSegment } from '../types';
 import { formatCallDuration } from '../utils/dataMapper';
+import { fetchCallById, fetchCallEvents } from '../services/calls/callHistoryService';
 
 const TIMELINE_ICON = {
   info: <Info size={13} className="text-blue-500" />,
@@ -31,7 +31,7 @@ function TimelineItem({ event, isLast }: { event: CallTimelineEvent; isLast: boo
         <div className={`w-3 h-3 rounded-full flex-shrink-0 mt-0.5 ${TIMELINE_DOT[event.type]}`} />
         {!isLast && <div className="w-px flex-1 bg-slate-200 my-1" />}
       </div>
-      <div className={`pb-4 ${isLast ? '' : ''}`}>
+      <div className="pb-4">
         <span className="text-xs text-slate-400 font-mono">{event.time}</span>
         <div className="text-sm text-slate-700 mt-0.5 flex items-start gap-1.5">
           {TIMELINE_ICON[event.type]}
@@ -47,12 +47,71 @@ export default function CallDetailsPage() {
   const navigate = useNavigate();
   const { callHistory } = useCallHistory();
   const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [backendCall, setBackendCall] = useState<CallHistoryItem | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const allCalls = [
-    ...callHistory,
-    ...MOCK_CALL_HISTORY.filter(mc => !callHistory.find(c => c.id === mc.id)),
-  ];
-  const call = allCalls.find(c => c.id === callId);
+  useEffect(() => {
+    if (!callId) return;
+    const local = callHistory.find((c) => c.id === callId);
+    if (local && local.timeline.length > 0) {
+      setBackendCall(local);
+      return;
+    }
+
+    setLoading(true);
+    Promise.all([fetchCallById(callId), fetchCallEvents(callId)])
+      .then(([callData, events]) => {
+        if (!callData) return;
+
+        const timeline: CallTimelineEvent[] = events.map((e) => {
+          const time = new Date(e.timestamp).toLocaleTimeString('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          });
+          const type =
+            e.risk_level === 'CRITICAL' ? 'critical' : e.risk_level === 'HIGH' ? 'warning' : 'info';
+          return {
+            time,
+            description: `Chunk #${e.chunk_id}: ${e.verdict} (Risk: ${e.risk_score.toFixed(1)}/100)`,
+            type,
+          };
+        });
+
+        const transcript: TranscriptSegment[] = events
+          .filter((e) => e.transcript && e.transcript.trim())
+          .map((e) => ({
+            id: `seg-${e.chunk_id}`,
+            speaker: 'caller',
+            text: e.transcript || '',
+            timestamp: new Date(e.timestamp).getTime(),
+            isSuspicious: e.risk_score >= 60,
+          }));
+
+        setBackendCall({
+          ...callData,
+          timeline: timeline.length > 0 ? timeline : (local?.timeline ?? []),
+          transcript: transcript.length > 0 ? transcript : (local?.transcript ?? []),
+        });
+      })
+      .catch((err) => {
+        console.warn('[CallDetailsPage] Failed to fetch call details:', err);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [callId, callHistory]);
+
+  const call = backendCall || callHistory.find((c) => c.id === callId);
+
+  if (loading) {
+    return (
+      <div className="max-w-2xl mx-auto p-8 text-center">
+        <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+        <p className="text-slate-500 text-sm">Loading call details...</p>
+      </div>
+    );
+  }
 
   if (!call) {
     return (
@@ -67,12 +126,17 @@ export default function CallDetailsPage() {
     );
   }
 
-  const formatDate = (d: Date) => d.toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) +
-    ' · ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  const formatDate = (d: Date) =>
+    d.toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) +
+    ' · ' +
+    d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 
   return (
     <div className="max-w-2xl mx-auto p-4 md:p-6 space-y-5">
-      <button onClick={() => navigate('/history')} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700">
+      <button
+        onClick={() => navigate('/history')}
+        className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
+      >
         <ArrowLeft size={15} /> Call History
       </button>
 
@@ -80,19 +144,27 @@ export default function CallDetailsPage() {
       <Card>
         <div className="flex items-start gap-4">
           <div className="w-14 h-14 rounded-full bg-slate-700 text-white text-xl font-semibold flex items-center justify-center flex-shrink-0">
-            {call.caller.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+            {call.caller.name
+              .split(' ')
+              .map((n) => n[0])
+              .join('')
+              .slice(0, 2)}
           </div>
           <div className="flex-1">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <h1 className="text-lg font-bold text-slate-900">{call.caller.name}</h1>
-                <div className="text-slate-500 text-sm">{call.caller.claimedRole}</div>
+                <div className="text-slate-500 text-sm">{call.caller.claimedRole || 'Direct Call'}</div>
               </div>
               <SeverityBadge level={call.finalSeverity} size="md" />
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-3 text-xs text-slate-500">
-              <div className="flex items-center gap-1"><Clock size={11} /> {formatDate(call.startTime)}</div>
-              <div className="flex items-center gap-1"><Phone size={11} /> {formatCallDuration(call.duration)}</div>
+              <div className="flex items-center gap-1">
+                <Clock size={11} /> {formatDate(call.startTime)}
+              </div>
+              <div className="flex items-center gap-1">
+                <Phone size={11} /> {formatCallDuration(call.duration)}
+              </div>
               <div className="col-span-2 mt-1 font-medium text-slate-600">{call.finalAction}</div>
             </div>
           </div>
@@ -102,21 +174,27 @@ export default function CallDetailsPage() {
       {/* Signals */}
       {call.signals.length > 0 && (
         <div>
-          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Detected in this call</div>
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+            Detected in this call
+          </div>
           <div className="flex flex-wrap gap-2">
-            {call.signals.map(s => <ConversationSignalTag key={s.type} signal={s} />)}
+            {call.signals.map((s) => (
+              <ConversationSignalTag key={s.type} signal={s} />
+            ))}
           </div>
         </div>
       )}
 
       {/* Timeline */}
-      <Card header={<span className="text-sm font-semibold text-slate-700">What happened</span>}>
-        <div className="pt-2">
-          {call.timeline.map((evt, i) => (
-            <TimelineItem key={i} event={evt} isLast={i === call.timeline.length - 1} />
-          ))}
-        </div>
-      </Card>
+      {call.timeline.length > 0 && (
+        <Card header={<span className="text-sm font-semibold text-slate-700">Forensic Timeline</span>}>
+          <div className="pt-2">
+            {call.timeline.map((evt, i) => (
+              <TimelineItem key={i} event={evt} isLast={i === call.timeline.length - 1} />
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* Summary */}
       <Card header={<span className="text-sm font-semibold text-slate-700">Summary</span>}>
@@ -124,16 +202,18 @@ export default function CallDetailsPage() {
       </Card>
 
       {/* Recommendation */}
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-        <div className="text-sm font-semibold text-blue-900 mb-1">Recommended action</div>
-        <p className="text-sm text-blue-800">{call.recommendation}</p>
-      </div>
+      {call.recommendation && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+          <div className="text-sm font-semibold text-blue-900 mb-1">Recommended action</div>
+          <p className="text-sm text-blue-800">{call.recommendation}</p>
+        </div>
+      )}
 
       {/* Transcript (collapsible) */}
       {call.transcript.length > 0 && (
         <Card>
           <button
-            onClick={() => setTranscriptOpen(o => !o)}
+            onClick={() => setTranscriptOpen((o) => !o)}
             className="flex items-center justify-between w-full text-sm font-semibold text-slate-700"
           >
             <span>Transcript ({call.transcript.length} segments)</span>
@@ -141,9 +221,11 @@ export default function CallDetailsPage() {
           </button>
           {transcriptOpen && (
             <div className="mt-3 space-y-2">
-              {call.transcript.map(seg => (
+              {call.transcript.map((seg) => (
                 <div key={seg.id} className="text-sm text-slate-600 bg-slate-50 rounded-lg p-2">
-                  <span className="text-xs font-medium text-slate-400 mr-2">{seg.speaker === 'caller' ? 'Caller' : 'You'}</span>
+                  <span className="text-xs font-medium text-slate-400 mr-2">
+                    {seg.speaker === 'caller' ? 'Caller' : 'You'}
+                  </span>
                   &ldquo;{seg.text}&rdquo;
                 </div>
               ))}

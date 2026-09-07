@@ -65,32 +65,45 @@ class SecurityOrchestrator:
 
     def start_call_session(
         self,
-        org_id: str,
+        org_id: Optional[str] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        recipient_user_id: Optional[str] = None,
         caller_number: Optional[str] = None,
         caller_name: Optional[str] = None,
         claimed_speaker_id: Optional[str] = None,
+        claimed_org_id: Optional[str] = None,
+        claimed_org_name: Optional[str] = None,
     ) -> CallSession:
         """Start and persist a new call session."""
         sess_id = session_id or f"call_{generate_uuid()[:12]}"
 
-        # Resolve claimed identity if speaker_id supplied
+        # Resolve claimed identity and claimed organization globally
         claimed_id_record = None
+        resolved_org_id = claimed_org_id or org_id
+        resolved_org_name = claimed_org_name
+
         if claimed_speaker_id:
             claimed_id_record = self.db.query(ProtectedIdentity).filter_by(
-                org_id=org_id, speaker_id=claimed_speaker_id
+                speaker_id=claimed_speaker_id
             ).first()
+            if claimed_id_record:
+                resolved_org_id = claimed_id_record.org_id
+                if not resolved_org_name and claimed_id_record.organization:
+                    resolved_org_name = claimed_id_record.organization.name
 
         call = CallSession(
             session_id=sess_id,
-            org_id=org_id,
+            org_id=resolved_org_id,
             user_id=user_id,
+            recipient_user_id=recipient_user_id,
             caller_number=caller_number,
             caller_name=caller_name,
             claimed_identity_id=claimed_id_record.id if claimed_id_record else None,
             claimed_speaker_id=claimed_speaker_id,
-            status="ACTIVE",
+            claimed_org_id=resolved_org_id,
+            claimed_org_name=resolved_org_name,
+            status="RINGING" if recipient_user_id else "ACTIVE",
             start_time=utcnow(),
             current_risk_score=0.0,
             current_risk_level="SAFE",
@@ -98,24 +111,31 @@ class SecurityOrchestrator:
         )
         self.db.add(call)
 
-        # Record audit log
-        audit = AuditLog(
-            org_id=org_id,
-            actor_id=user_id,
-            session_id=sess_id,
-            event_type="CALL_STARTED",
-            details_json=json.dumps({
-                "caller_number": caller_number,
-                "caller_name": caller_name,
-                "claimed_speaker_id": claimed_speaker_id,
-            }),
-        )
-        self.db.add(audit)
+        # Record audit log if org is known
+        if resolved_org_id:
+            audit = AuditLog(
+                org_id=resolved_org_id,
+                actor_id=user_id,
+                session_id=sess_id,
+                event_type="CALL_STARTED",
+                details_json=json.dumps({
+                    "caller_number": caller_number,
+                    "caller_name": caller_name,
+                    "claimed_speaker_id": claimed_speaker_id,
+                    "recipient_user_id": recipient_user_id,
+                    "claimed_org_id": resolved_org_id,
+                    "claimed_org_name": resolved_org_name,
+                }),
+            )
+            self.db.add(audit)
         self.db.commit()
 
         # Initialize session in Member 1 streaming pipeline
         self.ai_adapter.start_session(sess_id, claimed_speaker_id=claimed_speaker_id)
-        log.info("[Orchestrator] Started call session '%s' for org '%s' (claimed_speaker='%s')", sess_id, org_id, claimed_speaker_id)
+        log.info(
+            "[Orchestrator] Started call session '%s' (recipient='%s', claimed_org='%s', claimed_speaker='%s')",
+            sess_id, recipient_user_id, resolved_org_id, claimed_speaker_id
+        )
         return call
 
     async def end_call_session(
@@ -141,20 +161,21 @@ class SecurityOrchestrator:
         if summary.alert_reason:
             call.alert_reason = summary.alert_reason
 
-        audit = AuditLog(
-            org_id=call.org_id,
-            actor_id=actor_id,
-            session_id=session_id,
-            event_type="CALL_ENDED",
-            details_json=json.dumps({
-                "reason": reason,
-                "total_chunks": call.total_chunks,
-                "final_verdict": call.final_verdict,
-                "final_risk_level": call.current_risk_level,
-            }),
-        )
-        self.db.add(audit)
-        self.db.commit()
+        if call.org_id:
+            audit = AuditLog(
+                org_id=call.org_id,
+                actor_id=actor_id,
+                session_id=session_id,
+                event_type="CALL_ENDED",
+                details_json=json.dumps({
+                    "reason": reason,
+                    "total_chunks": call.total_chunks,
+                    "final_verdict": call.final_verdict,
+                    "final_risk_level": call.current_risk_level,
+                }),
+            )
+            self.db.add(audit)
+            self.db.commit()
 
         # Dispatch WebSocket event to active call socket
         ended_payload = CallEndedPayload(
@@ -221,10 +242,10 @@ class SecurityOrchestrator:
         protected_identity = None
         if call.claimed_speaker_id:
             protected_identity = self.db.query(ProtectedIdentity).filter_by(
-                org_id=org_id, speaker_id=call.claimed_speaker_id
+                speaker_id=call.claimed_speaker_id
             ).first()
 
-        policy = self.db.query(SecurityPolicy).filter_by(org_id=org_id).first()
+        policy = self.db.query(SecurityPolicy).filter_by(org_id=org_id).first() if org_id else None
 
         # 3. Apply Policy Engine
         policy_eval: PolicyEvaluationResult = self.policy_engine.evaluate(
@@ -270,9 +291,16 @@ class SecurityOrchestrator:
         )
         self.db.add(risk_event)
 
+        # Target individual identification (recipient receiving call)
+        target_individual_name = "Sreya Sengupta (Citizen)"
+        if call.recipient_user_id:
+            recip = self.db.query(User).filter_by(id=call.recipient_user_id).first()
+            if recip:
+                target_individual_name = f"{recip.full_name}" if recip.full_name else recip.username
+
         # 6. Session-Aware Incident Creation & Deduplication
         active_incident: Optional[SecurityIncident] = None
-        if policy_eval.should_create_incident:
+        if policy_eval.should_create_incident and org_id:
             # Query existing incident for this call session
             existing_incident = self.db.query(SecurityIncident).filter_by(
                 session_id=session_id, org_id=org_id
@@ -289,6 +317,7 @@ class SecurityOrchestrator:
                 existing_incident.speaker_similarity = telemetry.smoothed_speaker_sim or telemetry.raw_speaker_sim
                 existing_incident.identity_status = telemetry.identity_status
                 existing_incident.intent = telemetry.intent
+                existing_incident.target_individual = target_individual_name
                 existing_incident.reasons_json = json.dumps(policy_eval.reasons)
                 existing_incident.context_signals_json = json.dumps(telemetry.context_signals)
                 existing_incident.recommended_action = policy_eval.recommended_action
@@ -302,6 +331,7 @@ class SecurityOrchestrator:
                     severity=policy_eval.risk_level,
                     scenario=policy_eval.scenario,
                     claimed_identity=claimed_name,
+                    target_individual=target_individual_name,
                     current_risk_score=policy_eval.risk_score,
                     synthetic_probability=telemetry.smoothed_synthetic_prob or telemetry.raw_synthetic_prob,
                     speaker_similarity=telemetry.smoothed_speaker_sim or telemetry.raw_speaker_sim,
@@ -324,6 +354,7 @@ class SecurityOrchestrator:
                         "severity": active_incident.severity,
                         "scenario": active_incident.scenario,
                         "risk_score": active_incident.current_risk_score,
+                        "target_individual": target_individual_name,
                     }),
                 )
                 self.db.add(audit)
@@ -335,12 +366,13 @@ class SecurityOrchestrator:
 
         # A. USER SECURITY ALERT (to active caller recipient)
         if policy_eval.should_warn_user:
+            claimed_label = protected_identity.full_name if protected_identity else (call.caller_name or call.claimed_speaker_id)
             user_alert = UserSecurityAlertPayload(
                 session_id=session_id,
                 severity=policy_eval.risk_level,
                 risk_score=policy_eval.risk_score,
-                warning_message=policy_eval.warning_message or "Security Warning: Voice cloning threat detected!",
-                claimed_identity=call.claimed_speaker_id,
+                warning_message=policy_eval.warning_message or f"CRITICAL: Possible AI voice clone impersonating {claimed_label}! Do NOT transfer funds or disclose sensitive info.",
+                claimed_identity=claimed_label,
                 reasons=policy_eval.reasons,
                 recommended_action=policy_eval.recommended_action,
                 timestamp=utcnow().isoformat(),
@@ -355,7 +387,7 @@ class SecurityOrchestrator:
             )
 
         # B. ORGANIZATION SECURITY ALERT (to organization SOC console)
-        if policy_eval.should_alert_org and active_incident:
+        if policy_eval.should_alert_org and active_incident and org_id:
             org_alert = OrganizationSecurityAlertPayload(
                 incident_id=active_incident.incident_id,
                 org_id=org_id,
@@ -364,6 +396,7 @@ class SecurityOrchestrator:
                 scenario=active_incident.scenario,
                 risk_score=active_incident.current_risk_score,
                 claimed_identity=active_incident.claimed_identity,
+                target_individual=active_incident.target_individual,
                 synthetic_probability=active_incident.synthetic_probability,
                 speaker_similarity=active_incident.speaker_similarity,
                 intent=active_incident.intent,

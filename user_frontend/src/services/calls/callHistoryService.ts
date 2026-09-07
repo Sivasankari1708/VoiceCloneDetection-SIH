@@ -1,4 +1,4 @@
-﻿import type { CallHistoryItem, SeverityLevel } from '../../types';
+import type { CallHistoryItem, SeverityLevel } from '../../types';
 import { config } from '../config';
 import { authService } from '../auth/authService';
 import { mapRiskLevel } from '../../utils/dataMapper';
@@ -53,7 +53,6 @@ function mapBackendCallSummary(raw: BackendCallSummary): CallHistoryItem {
 
 /** Fetches call history from the real backend. Falls back to empty array on error. */
 export async function fetchCallHistory(): Promise<CallHistoryItem[]> {
-  if (config.useMockStream) return [];
   try {
     const token = authService.getToken();
     const res = await fetch(`${config.apiBaseUrl}/api/calls`, {
@@ -63,6 +62,48 @@ export async function fetchCallHistory(): Promise<CallHistoryItem[]> {
     const data = await res.json();
     const calls: BackendCallSummary[] = Array.isArray(data) ? data : (data.calls ?? []);
     return calls.map(mapBackendCallSummary);
+  } catch {
+    return [];
+  }
+}
+
+export interface BackendRiskEventDto {
+  id: string;
+  session_id: string;
+  chunk_id: number;
+  risk_score: number;
+  risk_level: string;
+  verdict: string;
+  speech_detected: boolean;
+  transcript?: string;
+  details?: Record<string, unknown>;
+  timestamp: string;
+}
+
+/** Fetches a single call session by session ID from the backend */
+export async function fetchCallById(sessionId: string): Promise<CallHistoryItem | null> {
+  try {
+    const token = authService.getToken();
+    const res = await fetch(`${config.apiBaseUrl}/api/calls/${sessionId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return mapBackendCallSummary(data);
+  } catch {
+    return null;
+  }
+}
+
+/** Fetches persisted risk events for a call session from the backend */
+export async function fetchCallEvents(sessionId: string): Promise<BackendRiskEventDto[]> {
+  try {
+    const token = authService.getToken();
+    const res = await fetch(`${config.apiBaseUrl}/api/calls/${sessionId}/events`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return [];
+    return await res.json();
   } catch {
     return [];
   }

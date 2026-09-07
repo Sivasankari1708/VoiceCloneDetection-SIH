@@ -6,6 +6,8 @@ Authentication endpoints: login and profile identity.
 
 from __future__ import annotations
 
+from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -13,7 +15,7 @@ from backend.platform.config import platform_config
 from backend.platform.db.models import Organization, User
 from backend.platform.db.session import get_db
 from backend.platform.schemas.auth import LoginRequest, TokenResponse, UserCreateDto, UserDto
-from backend.platform.server.dependencies import get_current_user
+from backend.platform.server.dependencies import get_current_user, get_current_user_optional
 from backend.platform.services.auth_service import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -101,3 +103,13 @@ def register(req: UserCreateDto, db: Session = Depends(get_db)):
 def get_me(user: User = Depends(get_current_user)):
     """Return currently authenticated user profile."""
     return UserDto(**user.to_dict())
+
+
+@router.get("/users", response_model=List[UserDto])
+def list_org_users(
+    user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Return active users available to initiate or receive calls."""
+    users = db.query(User).filter_by(is_active=True).all()
+    return [UserDto(**u.to_dict()) for u in users]

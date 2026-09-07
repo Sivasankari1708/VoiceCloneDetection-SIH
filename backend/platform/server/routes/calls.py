@@ -10,9 +10,10 @@ import json
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from backend.platform.db.models import AuditLog, CallSession, Organization, SecurityIncident, User, utcnow
+from backend.platform.db.models import AuditLog, CallSession, Organization, RiskEvent, SecurityIncident, User, utcnow
 from backend.platform.db.session import get_db
 from backend.platform.schemas.calls import (
     CallEndRequest,
@@ -24,6 +25,9 @@ from backend.platform.schemas.events import WebSocketEventType
 from backend.platform.server.dependencies import get_current_user, get_current_user_optional
 from backend.platform.services.alert_dispatcher import AlertDispatcher
 from backend.platform.services.orchestrator import SecurityOrchestrator
+from backend.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/api/calls", tags=["Call Sessions"])
 
@@ -48,22 +52,53 @@ def _resolve_call_user(user: Optional[User], db: Session) -> User:
 
 
 @router.post("/start", response_model=CallSessionDto, status_code=status.HTTP_201_CREATED)
-def start_call(
+async def start_call(
     req: CallStartRequest,
     user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """Start an active call session under the user's organization."""
-    effective_user = _resolve_call_user(user, db)
+    """Start an active call session."""
+    target_recipient_id = None
+    if req.recipient_user_id:
+        recipient = db.query(User).filter(
+            (User.id == req.recipient_user_id) | (User.username == req.recipient_user_id),
+            User.is_active == True,
+        ).first()
+        if recipient:
+            target_recipient_id = recipient.id
+        else:
+            target_recipient_id = req.recipient_user_id
+    elif user and user.role == "USER":
+        target_recipient_id = user.id
+
+    caller_user_id = user.id if user else None
+    caller_display_name = req.caller_name or (user.full_name if user else "External Caller")
+
     orchestrator = SecurityOrchestrator(db=db)
     call = orchestrator.start_call_session(
-        org_id=effective_user.org_id,
+        org_id=req.claimed_org_id or (user.org_id if user else None),
         session_id=req.session_id,
-        user_id=effective_user.id,
+        user_id=caller_user_id,
+        recipient_user_id=target_recipient_id,
         caller_number=req.caller_number,
-        caller_name=req.caller_name,
+        caller_name=caller_display_name,
         claimed_speaker_id=req.claimed_speaker_id,
+        claimed_org_id=req.claimed_org_id,
+        claimed_org_name=req.claimed_org_name,
     )
+
+    # If this call is directed to a specific recipient, notify that recipient's personal WebSocket
+    if target_recipient_id:
+        dispatcher = AlertDispatcher.get_instance()
+        await dispatcher.send_to_user(
+            target_recipient_id,
+            {
+                "event": WebSocketEventType.INCOMING_CALL,
+                "timestamp": utcnow().isoformat(),
+                "data": call.to_dict(),
+            },
+        )
+
     return CallSessionDto(**call.to_dict())
 
 
@@ -75,11 +110,13 @@ def list_calls(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List call sessions for the user's organization."""
-    query = db.query(CallSession).filter_by(org_id=user.org_id)
-    if user.role == "USER":
-        # Regular users only see their own calls
-        query = query.filter_by(user_id=user.id)
+    """List call sessions for the user or organization."""
+    if user.role in ("ADMIN", "SOC_ANALYST", "SECURITY_ANALYST"):
+        query = db.query(CallSession).filter_by(org_id=user.org_id)
+    else:
+        query = db.query(CallSession).filter(
+            or_(CallSession.recipient_user_id == user.id, CallSession.user_id == user.id)
+        )
     if status_filter:
         query = query.filter_by(status=status_filter)
 
@@ -94,11 +131,87 @@ def get_call(
     db: Session = Depends(get_db),
 ):
     """Retrieve details and running risk state of a call session."""
-    call = db.query(CallSession).filter_by(session_id=session_id, org_id=user.org_id).first()
+    call = db.query(CallSession).filter_by(session_id=session_id).first()
     if not call:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call session not found.")
-    if user.role == "USER" and call.user_id != user.id:
+    if user.role == "USER" and call.user_id != user.id and call.recipient_user_id != user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
+    if user.role in ("ADMIN", "SOC_ANALYST") and call.org_id != user.org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
+    return CallSessionDto(**call.to_dict())
+
+
+@router.get("/{session_id}/events")
+def get_call_events(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve fine-grained forensic RiskEvents for a call session."""
+    call = db.query(CallSession).filter_by(session_id=session_id).first()
+    if not call:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call session not found.")
+    if user.role == "USER" and call.user_id != user.id and call.recipient_user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
+    if user.role in ("ADMIN", "SOC_ANALYST") and call.org_id != user.org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
+
+    events = db.query(RiskEvent).filter_by(session_id=session_id).order_by(RiskEvent.chunk_id.asc()).all()
+    return [
+        {
+            "id": e.id,
+            "session_id": e.session_id,
+            "chunk_id": e.chunk_id,
+            "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+            "speech_detected": e.speech_detected,
+            "raw_synthetic_prob": e.raw_synthetic_prob,
+            "smoothed_synthetic_prob": e.smoothed_synthetic_prob,
+            "raw_speaker_sim": e.raw_speaker_sim,
+            "smoothed_speaker_sim": e.smoothed_speaker_sim,
+            "speaker_match": e.speaker_match,
+            "transcript": e.transcript_chunk,
+            "intent": e.intent,
+            "intent_confidence": e.intent_confidence,
+            "verdict": e.verdict,
+            "risk_score": e.risk_score,
+            "risk_level": e.risk_level,
+            "recommended_action": e.recommended_action,
+            "is_alert": e.is_alert,
+            "alert_reason": e.alert_reason,
+        }
+        for e in events
+    ]
+
+
+@router.post("/{session_id}/accept", response_model=CallSessionDto)
+async def accept_call(
+    session_id: str,
+    user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Transition ringing call session to ACTIVE and notify all participants."""
+    call = db.query(CallSession).filter_by(session_id=session_id).first()
+    if not call:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call session not found.")
+
+    call.status = "ACTIVE"
+    db.commit()
+    db.refresh(call)
+
+    # Broadcast CALL_ACCEPTED to call stream WebSockets
+    dispatcher = AlertDispatcher.get_instance()
+    accepted_event = {
+        "event": WebSocketEventType.CALL_ACCEPTED,
+        "timestamp": utcnow().isoformat(),
+        "data": call.to_dict(),
+    }
+    await dispatcher.send_to_call(session_id, accepted_event)
+
+    # Also notify caller's personal user socket if caller is known
+    if call.user_id:
+        await dispatcher.send_to_user(call.user_id, accepted_event)
+
+    log.info("[CallsAPI] Call session '%s' accepted. Status: ACTIVE.", session_id)
     return CallSessionDto(**call.to_dict())
 
 
@@ -123,6 +236,20 @@ async def end_call(
     )
     if not summary:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed ending call session.")
+
+    # Also notify recipient's personal WebSocket if assigned
+    dispatcher = AlertDispatcher.get_instance()
+    recipients_to_notify = {uid for uid in [call.recipient_user_id, call.user_id] if uid}
+    for uid in recipients_to_notify:
+        await dispatcher.send_to_user(
+            uid,
+            {
+                "event": WebSocketEventType.CALL_ENDED,
+                "timestamp": utcnow().isoformat(),
+                "data": {"session_id": session_id, "reason": req.reason or "NORMAL_HANGUP"},
+            },
+        )
+
     return summary
 
 

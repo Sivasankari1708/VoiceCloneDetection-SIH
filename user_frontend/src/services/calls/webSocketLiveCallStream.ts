@@ -1,8 +1,6 @@
 import type {
   CallEvent,
   CallSession,
-  ScenarioId,
-  CallerIdentity,
   SecurityStatus,
   TranscriptSegment,
   BackendRiskUpdate,
@@ -11,10 +9,9 @@ import type {
 import type { LiveCallStream } from './liveCallStream';
 import { config } from '../config';
 import { authService } from '../auth/authService';
-import { DEMO_SCENARIOS, buildScenarioEvents } from '../../mock-data/scenarios';
-import { mapBackendRiskUpdate, mapRiskLevel, scoreToSeverity } from '../../utils/dataMapper';
+import { mapBackendRiskUpdate, mapRiskLevel } from '../../utils/dataMapper';
 import { downsampleTo16kHz, float32ToInt16PCM, encodeWAV } from '../../utils/audioUtils';
-import { speakCallerText, stopCallerSpeech } from '../../utils/speechSynthesis';
+import { AudioFileStreamer } from './audioFileStreamer';
 
 interface StartCallResponse {
   session_id: string;
@@ -42,6 +39,19 @@ export interface StreamDiagnostics {
   lastUpdateTime: number;
 }
 
+export interface StartCallParams {
+  callId?: string;
+  sessionId?: string;
+  recipientUserId?: string;
+  callerName?: string;
+  claimedSpeakerId?: string;
+  claimedOrgId?: string;
+  claimedOrgName?: string;
+  testAudioUrl?: string; // If provided, streams real WAV file chunks instead of mic
+  receiveOnly?: boolean;  // If true (e.g. recipient monitoring), do not capture mic or stream audio
+  waitForAcceptance?: boolean; // If true, wait for CALL_ACCEPTED before streaming audio
+}
+
 export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   private handlers: Array<(event: CallEvent) => void> = [];
   private ws: WebSocket | null = null;
@@ -51,9 +61,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   private transcriptCache: TranscriptSegment[] = [];
   private micMuted = false;
   private lastWaveformEmitTime = 0;
-  private scenarioTimers: ReturnType<typeof setTimeout>[] = [];
-  private lastScenarioScore = 0;
-  private currentCallId: string | null = null;
+  private audioFileStreamer: AudioFileStreamer = new AudioFileStreamer();
 
   // Web Audio Graph & Buffering
   private audioContext: AudioContext | null = null;
@@ -62,7 +70,6 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   private processor: ScriptProcessorNode | null = null;
   private rawSampleBuffer: number[] = [];
   private animFrameId: number | null = null;
-  private lastRMSLogTime = 0;
   private lastCallbackLogTime = 0;
 
   // Diagnostics Telemetry State
@@ -82,7 +89,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
     lastTranscript: '',
     lastVerdict: 'inconclusive',
     lastRiskScore: 0,
-    lastRiskLevel: 'ANALYZING',
+    lastRiskLevel: 'SAFE',
     lastSpeechDetected: null,
     lastUpdateTime: Date.now(),
   };
@@ -98,25 +105,40 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
     return { ...this.diagnostics };
   }
 
+  getSessionId(): string | null {
+    return this.sessionId;
+  }
+
   setMicEnabled(enabled: boolean): void {
     this.micMuted = !enabled;
     this.diagnostics.micStatus = enabled ? 'connected' : 'requesting';
     if (this.mediaStream) {
-      this.mediaStream.getAudioTracks().forEach(t => { t.enabled = enabled; });
+      this.mediaStream.getAudioTracks().forEach((t) => {
+        t.enabled = enabled;
+      });
     }
   }
 
-  async start(scenarioId: ScenarioId = 'genuine_executive', callId: string = `call-${Date.now()}`): Promise<void> {
-    this.stop();
+  async start(
+    scenarioOrParams: string | StartCallParams = 'genuine_executive',
+    callIdFallback: string = `call-${Date.now()}`
+  ): Promise<void> {
+    this.stop(false);
     this.active = true;
     this.micMuted = false;
     this.callStartTime = new Date();
     this.transcriptCache = [];
     this.rawSampleBuffer = [];
-    this.currentCallId = callId;
+
+    const params: StartCallParams =
+      typeof scenarioOrParams === 'string'
+        ? { callId: callIdFallback }
+        : scenarioOrParams;
+
+    const callId = params.callId || callIdFallback;
 
     this.diagnostics = {
-      micStatus: 'requesting',
+      micStatus: params.testAudioUrl ? 'connected' : 'requesting',
       audioContextState: 'none',
       audioContextSampleRate: 0,
       activityLevel: 0.05,
@@ -131,91 +153,54 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       lastTranscript: '',
       lastVerdict: 'inconclusive',
       lastRiskScore: 0,
-      lastRiskLevel: 'ANALYZING',
+      lastRiskLevel: 'SAFE',
       lastSpeechDetected: null,
       lastUpdateTime: Date.now(),
     };
 
-    // 1. Initial Call Session
-    const initialSession = buildInitialSession(callId, scenarioId);
+    // 1. Initial Call Session — zero mock scores
+    const initialSession: CallSession = {
+      id: callId,
+      source: 'browser',
+      caller: {
+        name: params.callerName || 'Inbound Call',
+        claimedRole: params.claimedSpeakerId === 'LA_0069' ? 'Chief Financial Officer' : 'Direct Call',
+        organization: 'Protected Organization',
+        status: 'checking',
+        statusMessage: 'VoiceShield active: Analyzing speech patterns...',
+      },
+      startTime: this.callStartTime,
+      state: 'active',
+      security: {
+        score: 0,
+        severity: 'SAFE',
+        message: 'VoiceShield connected. Listening for speech...',
+        signals: [],
+        voiceAuthenticity: 'unknown',
+        callerIdentity: 'checking',
+        securityTeamNotified: false,
+      },
+      transcript: [],
+      waveformActivity: 0.05,
+      scenarioId: params.claimedSpeakerId ? 'claimed_vip' : 'natural_call',
+    };
+
     this.emit({
       type: 'call_started',
       timestamp: Date.now(),
       payload: initialSession,
     });
 
-    // Clear previous scenario simulation timers
-    this.scenarioTimers.forEach(clearTimeout);
-    this.scenarioTimers = [];
-    this.lastScenarioScore = initialSession.security.score;
-
-    // Schedule realistic scenario simulation progression
-    const steps = buildScenarioEvents(scenarioId);
-    let cumulativeDelay = 200;
-    for (const step of steps) {
-      cumulativeDelay += step.delayMs;
-      const t = setTimeout(() => {
-        if (!this.active) return;
-        const p = step.event;
-        if (p.security?.score !== undefined) {
-          this.lastScenarioScore = p.security.score;
-          this.reportScenarioRiskToBackend(scenarioId, p);
-        }
-        if (p.transcript) {
-          this.transcriptCache = [...p.transcript];
-          const latestSeg = p.transcript[p.transcript.length - 1];
-          if (latestSeg && latestSeg.speaker === 'caller') {
-            speakCallerText(latestSeg.text, scenarioId, {
-              onStart: () => {
-                if (!this.active) return;
-                this.emit({
-                  type: 'waveform_update',
-                  timestamp: Date.now(),
-                  payload: { waveformActivity: 0.8 },
-                });
-              },
-              onEnd: () => {
-                if (!this.active) return;
-                this.emit({
-                  type: 'waveform_update',
-                  timestamp: Date.now(),
-                  payload: { waveformActivity: 0.08 },
-                });
-              },
-            });
-          }
-        }
-        this.emit({
-          type: 'security_update',
-          timestamp: Date.now(),
-          payload: {
-            ...p,
-            transcript: [...this.transcriptCache],
-          },
-        });
-        if (p.waveformActivity !== undefined && !this.micMuted) {
-          this.emit({
-            type: 'waveform_update',
-            timestamp: Date.now(),
-            payload: { waveformActivity: p.waveformActivity },
-          });
-        }
-      }, cumulativeDelay);
-      this.scenarioTimers.push(t);
+    // 2. If existing session ID provided (e.g. recipient accepted incoming call), connect directly
+    if (params.sessionId) {
+      this.sessionId = params.sessionId;
+      this.connectWebSocket(params.sessionId, params);
+      return;
     }
 
-    // 2. Start microphone capture & Audio Graph
-    await this.startMicrophone();
-
-    // 3. Create backend session on FastAPI
-    const scenario = DEMO_SCENARIOS[scenarioId] || DEMO_SCENARIOS['genuine_executive'];
-    let claimedSpeakerId: string | null = null;
-    if (scenarioId === 'ai_cloned_cfo' || scenarioId === 'genuine_executive' || scenarioId === 'human_impersonator') {
-      claimedSpeakerId = 'LA_0069'; // CFO reference profile in DB
-    }
-
+    // 3. Otherwise create backend session via FastAPI /api/calls/start
     try {
-      const token = await (authService as any).ensureToken?.() || authService.getToken();
+      const token = authService.getToken();
       console.info(`[WS] Creating backend session via ${config.apiBaseUrl}/api/calls/start...`);
       const res = await fetch(`${config.apiBaseUrl}/api/calls/start`, {
         method: 'POST',
@@ -224,9 +209,12 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          caller_name: scenario.caller.name,
-          caller_number: scenario.caller.claimedRole,
-          claimed_speaker_id: claimedSpeakerId,
+          caller_name: params.callerName || 'Caller Simulator',
+          caller_number: 'browser_stream',
+          claimed_speaker_id: params.claimedSpeakerId || null,
+          claimed_org_id: params.claimedOrgId || null,
+          claimed_org_name: params.claimedOrgName || null,
+          recipient_user_id: params.recipientUserId || null,
         }),
       });
 
@@ -239,26 +227,70 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       console.info(`[WS] Backend session created: ${data.session_id}`);
 
       // 4. Open WebSocket connection
-      this.connectWebSocket(data.session_id);
+      this.connectWebSocket(data.session_id, params);
     } catch (err) {
-      console.error('[WS] Failed to initialize backend session, falling back to standalone channel:', err);
+      console.error('[WS] Failed to initialize backend session, falling back to direct channel:', err);
       this.diagnostics.wsStatus = 'error';
-      // Attempt fallback connection directly with callId (backend will auto-provision)
-      this.connectWebSocket(callId);
+      this.connectWebSocket(callId, params);
     }
   }
 
-  private connectWebSocket(sessionId: string): void {
+  private connectWebSocket(sessionId: string, params: StartCallParams): void {
     const wsUrl = `${config.wsBaseUrl}/ws/stream/${sessionId}`;
     console.info(`[WS] CONNECTING to ${wsUrl}...`);
     const ws = new WebSocket(wsUrl);
     this.ws = ws;
     ws.binaryType = 'arraybuffer';
 
-    ws.onopen = () => {
+    let audioStreamingStarted = false;
+    const startAudioSource = async () => {
+      if (audioStreamingStarted) return;
+      audioStreamingStarted = true;
+
+      if (params.receiveOnly) {
+        // Monitoring Mode (Recipient View): receive-only, no microphone or file streaming
+        console.info('[WS] Receive-only mode active (recipient monitoring). Microphone stream is disabled.');
+        this.diagnostics.micStatus = 'connected';
+      } else if (params.testAudioUrl) {
+        // Test Audio Mode: stream real WAV file chunks
+        console.info('[WS] Starting AudioFileStreamer with sample:', params.testAudioUrl);
+        this.audioFileStreamer
+          .startStreaming(
+            params.testAudioUrl,
+            ws,
+            (progress) => {
+              this.diagnostics.pcmFramesSent = progress.chunkIndex;
+              this.diagnostics.totalBytesSent = progress.bytesSent;
+              this.diagnostics.rms = progress.rms;
+              this.emit({
+                type: 'waveform_update',
+                timestamp: Date.now(),
+                payload: { waveformActivity: progress.rms },
+              });
+            },
+            () => {
+              console.info('[WS] AudioFileStreamer completed sending all chunks.');
+            }
+          )
+          .catch((err) => {
+            console.error('[WS] Error streaming audio file:', err);
+          });
+      } else {
+        // Live Microphone Mode: capture actual browser mic
+        await this.startMicrophone();
+      }
+    };
+
+    ws.onopen = async () => {
       console.info('[WS] OPEN — WebSocket stream connected successfully');
       this.diagnostics.wsStatus = 'connected';
       this.diagnostics.lastEvent = 'WS_CONNECTED';
+
+      if (!params.waitForAcceptance) {
+        await startAudioSource();
+      } else {
+        console.info('[WS] Waiting for recipient to accept before starting audio stream...');
+      }
     };
 
     ws.onmessage = (evt) => {
@@ -283,7 +315,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
         if (eventName === 'RISK_UPDATE') {
           const update = data as BackendRiskUpdate;
           console.info(
-            `[WS RX] event = RISK_UPDATE | risk_level = ${update.risk_level} | risk_score = ${update.risk_score} | speech = ${update.speech_detected} | verdict = ${update.verdict} | transcript = "${update.transcript || ''}"`
+            `[WS RX] RISK_UPDATE | score=${update.risk_score} | level=${update.risk_level} | verdict=${update.verdict} | speech=${update.speech_detected} | text="${update.transcript || ''}"`
           );
           this.diagnostics.lastVerdict = update.verdict;
           this.diagnostics.lastRiskScore = update.risk_score;
@@ -295,10 +327,17 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
           this.handleRiskUpdate(update);
         } else if (eventName === 'USER_SECURITY_ALERT') {
           const alertData = data as BackendUserSecurityAlert;
-          console.warn(`[WS RX] event = USER_SECURITY_ALERT | severity = ${alertData.severity} | score = ${alertData.risk_score}`);
+          console.warn(`[WS RX] USER_SECURITY_ALERT | severity=${alertData.severity} | score=${alertData.risk_score}`);
           this.handleSecurityAlert(alertData);
+        } else if (eventName === 'CALL_ACCEPTED') {
+          console.info('[WS RX] CALL_ACCEPTED received from backend');
+          this.emit({ type: 'call_accepted', timestamp: Date.now(), payload: (data as any) || {} });
+          if (params.waitForAcceptance) {
+            console.info('[WS] Recipient accepted call! Commencing audio stream now...');
+            startAudioSource();
+          }
         } else if (eventName === 'CALL_ENDED') {
-          console.info('[WS RX] event = CALL_ENDED');
+          console.info('[WS RX] CALL_ENDED');
           this.active = false;
           this.emit({ type: 'call_ended', timestamp: Date.now(), payload: {} });
         } else if (eventName === 'ERROR') {
@@ -320,11 +359,9 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
     };
   }
 
-  stop(): void {
-    stopCallerSpeech();
+  stop(terminateBackendSession: boolean = false, reason: string = 'NORMAL_HANGUP'): void {
     this.active = false;
-    this.scenarioTimers.forEach(clearTimeout);
-    this.scenarioTimers = [];
+    this.audioFileStreamer.stop();
     this.stopMicrophone();
 
     if (this.animFrameId) {
@@ -337,7 +374,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       this.ws = null;
     }
 
-    if (this.sessionId) {
+    if (terminateBackendSession && this.sessionId) {
       const token = authService.getToken();
       const endUrl = `${config.apiBaseUrl}/api/calls/${this.sessionId}/end`;
       fetch(endUrl, {
@@ -346,76 +383,21 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ reason: 'NORMAL_HANGUP' }),
+        body: JSON.stringify({ reason }),
       }).catch(() => {});
       this.sessionId = null;
     }
+  }
+
+  terminate(reason: string = 'NORMAL_HANGUP'): void {
+    this.stop(true, reason);
   }
 
   isActive(): boolean {
     return this.active;
   }
 
-  private reportScenarioRiskToBackend(scenarioId: ScenarioId, payload: Record<string, any>): void {
-    const scenario = DEMO_SCENARIOS[scenarioId] || DEMO_SCENARIOS['genuine_executive'];
-    const riskScore = Number(payload.security?.score ?? 0);
-    const riskLevel = riskScore >= 80 ? 'CRITICAL' : riskScore >= 60 ? 'HIGH' : 'LOW';
-    const claimedIdentity = scenario.caller.name;
-    const rawSignals = (payload.signals || []) as Array<Record<string, any>>;
-    const intent = rawSignals.find(s =>
-      String(s.type || '').includes('payment') ||
-      String(s.type || '').includes('otp') ||
-      String(s.type || '').includes('threat') ||
-      String(s.type || '').includes('urgent')
-    )?.label || 'Call Security Verification';
-
-    const riskEvent = {
-      type: 'SCENARIO_RISK_UPDATE',
-      data: {
-        scenario: scenarioId,
-        risk_score: riskScore,
-        risk_level: riskLevel,
-        claimed_identity: claimedIdentity,
-        intent,
-        synthetic_probability: typeof payload.security?.syntheticProbability === 'number'
-          ? payload.security.syntheticProbability
-          : (riskScore / 100),
-        speaker_similarity: typeof payload.security?.speakerMatch === 'number'
-          ? (payload.security.speakerMatch / 100)
-          : 0.85,
-        reasons: ['Biometric anomaly detected', 'Impersonation vector'],
-        signals: payload.signals || [],
-        transcript: this.transcriptCache.map(t => `${t.speaker}: ${t.text}`).join('\n'),
-      },
-    };
-
-    // 1. Send over active WebSocket if open
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(JSON.stringify(riskEvent));
-      } catch (err) {
-        console.warn('[WS TX] Failed to send SCENARIO_RISK_UPDATE over socket:', err);
-      }
-    }
-
-    // 2. HTTP POST fallback to ensure backend and SOC persistence
-    const targetSessionId = this.sessionId || this.currentCallId;
-    if (targetSessionId) {
-      const token = authService.getToken();
-      fetch(`${config.apiBaseUrl}/api/calls/${targetSessionId}/report_risk`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(riskEvent),
-      }).catch(err => {
-        console.warn('[HTTP] Failed to report risk to backend:', err);
-      });
-    }
-  }
-
-  // ── Step 1-7: Real Chrome Microphone Capture, WebAudio Graph & Resampling ──
+  // ── Real Chrome Microphone Capture, WebAudio Graph & Resampling ──
   private async startMicrophone(): Promise<void> {
     try {
       console.info('[VOICE] Requesting microphone access from browser...');
@@ -427,58 +409,39 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
         },
       });
       this.mediaStream = stream;
-
-      const tracks = stream.getAudioTracks();
-      console.info('[VOICE] stream received');
-      console.info('[VOICE] audio tracks =', tracks.length);
-      console.info('[VOICE] track kind =', tracks[0]?.kind);
-      console.info('[VOICE] track enabled =', tracks[0]?.enabled);
-      console.info('[VOICE] track readyState =', tracks[0]?.readyState);
-      console.info('[VOICE] track settings =', JSON.stringify(tracks[0]?.getSettings() || {}));
-
       this.diagnostics.micStatus = 'connected';
 
-      // 1. Create AudioContext and ensure it is resumed
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioCtx();
       this.audioContext = ctx;
 
       if (ctx.state === 'suspended') {
-        console.info('[VOICE] AudioContext was suspended, resuming...');
         await ctx.resume();
       }
 
-      console.info('[VOICE] AudioContext state =', ctx.state);
-      console.info('[VOICE] native sample rate =', ctx.sampleRate);
       this.diagnostics.audioContextState = ctx.state as 'running' | 'suspended' | 'closed';
       this.diagnostics.audioContextSampleRate = ctx.sampleRate;
 
-      // 2. Connect MediaStreamAudioSourceNode
       const source = ctx.createMediaStreamSource(stream);
 
-      // 3. AnalyserNode for Real Time-Domain RMS & Waveform
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 512;
       analyser.smoothingTimeConstant = 0.2;
       this.analyser = analyser;
       source.connect(analyser);
 
-      // 4. ScriptProcessorNode for live frame capture
       // eslint-disable-next-line @typescript-eslint/no-deprecated
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       this.processor = processor;
 
       source.connect(processor);
-      // Connect processor directly to destination so Chrome audio thread keeps it active
       processor.connect(ctx.destination);
 
-      // Store in window global to prevent Chrome garbage collection
       (window as unknown as { _voiceShieldProcessor: ScriptProcessorNode; _voiceShieldCtx: AudioContext })._voiceShieldProcessor = processor;
       (window as unknown as { _voiceShieldCtx: AudioContext })._voiceShieldCtx = ctx;
 
       const nativeSr = ctx.sampleRate;
-      // Target: Accumulate 1.0 second of audio at native sample rate
-      const targetNativeChunkSize = Math.round(nativeSr * 1.0);
+      const targetNativeChunkSize = Math.round(nativeSr * 1.0); // 1.0 second
 
       processor.onaudioprocess = (e) => {
         if (!this.active) return;
@@ -486,36 +449,31 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
 
         const inputData = e.inputBuffer.getChannelData(0);
 
-        // Mute outputBuffer to prevent speaker feedback/echo
+        // Mute outputBuffer to prevent feedback echo
         const outputData = e.outputBuffer.getChannelData(0);
         outputData.fill(0);
 
-        // If user muted microphone via UI, do not accumulate or send samples
-        if (this.micMuted) {
-          return;
-        }
+        if (this.micMuted) return;
 
-        // Copy raw microphone float32 samples
         for (let i = 0; i < inputData.length; i++) {
           this.rawSampleBuffer.push(inputData[i]);
         }
 
         const now = Date.now();
         if (now - this.lastCallbackLogTime > 1000) {
-          console.info(`[AUDIO] callbacks = ${this.diagnostics.audioProcessCallbacks}`);
           this.lastCallbackLogTime = now;
         }
 
         if (this.rawSampleBuffer.length >= targetNativeChunkSize) {
           const rawChunk = this.rawSampleBuffer.splice(0, targetNativeChunkSize);
 
-          // A. Downsample from native sample rate (e.g. 48000Hz) to 16,000 Hz
+          // 1. Downsample from native rate to 16,000 Hz
           const resampledFloat32 = downsampleTo16kHz(rawChunk, nativeSr);
 
-          // B. Convert float32 [-1.0, 1.0] to 16-bit PCM
+          // 2. Convert float32 to 16-bit PCM
           const int16PCM = float32ToInt16PCM(resampledFloat32);
 
-          // C. Count non-zero samples
+          // 3. Check non-zero percent
           let nonZeroCount = 0;
           for (let i = 0; i < int16PCM.length; i++) {
             if (int16PCM[i] !== 0) nonZeroCount++;
@@ -523,23 +481,17 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
           const nonZeroPercent = (nonZeroCount / int16PCM.length) * 100;
           this.diagnostics.pcmNonZeroPercent = Math.round(nonZeroPercent);
 
-          console.info(
-            `[AUDIO] sampleRate = 16000 | channels = 1 | samples = ${int16PCM.length} | nonZeroSamples = ${nonZeroCount} (${nonZeroPercent.toFixed(1)}%) | bytes = ${int16PCM.byteLength}`
-          );
-
-          // D. Encode standard 16kHz WAV container with RIFF header
+          // 4. Encode standard 16kHz WAV container
           const wavBuffer = encodeWAV(int16PCM, 16000);
 
           if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(wavBuffer);
             this.diagnostics.pcmFramesSent++;
             this.diagnostics.totalBytesSent += wavBuffer.byteLength;
-            console.info(`[WS] PCM frames sent = ${this.diagnostics.pcmFramesSent} | bytes sent = ${this.diagnostics.totalBytesSent}`);
           }
         }
       };
 
-      // Start continuous real-time RMS time-domain loop
       this.startRealRMSLoop();
     } catch (err) {
       console.error('[VOICE] Microphone initialization error:', err);
@@ -547,7 +499,6 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
     }
   }
 
-  // ── Step 3 & 4: Real Time-Domain RMS Calculation ───────────────────────────
   private startRealRMSLoop(): void {
     const updateLoop = () => {
       if (!this.active) return;
@@ -576,16 +527,10 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
           const rms = Math.sqrt(sumSquares / timeData.length);
           this.diagnostics.rms = rms;
 
-          // Map RMS to normalized activity level (0.04 - 1.0)
           const normalizedActivity = Math.min(1.0, Math.max(0.04, rms * 5.0));
           this.diagnostics.activityLevel = normalizedActivity;
 
           const now = Date.now();
-          if (now - this.lastRMSLogTime > 500) {
-            console.info(`[VOICE] RMS = ${rms.toFixed(4)}`);
-            this.lastRMSLogTime = now;
-          }
-
           if (now - this.lastWaveformEmitTime >= 80) {
             this.lastWaveformEmitTime = now;
             this.emit({
@@ -621,11 +566,9 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       this.audioContext = null;
     }
     this.rawSampleBuffer = [];
-    (window as unknown as { _voiceShieldProcessor?: unknown; _voiceShieldCtx?: unknown })._voiceShieldProcessor = undefined;
-    (window as unknown as { _voiceShieldCtx?: unknown })._voiceShieldCtx = undefined;
   }
 
-  // ── Handle Backend ML Pipeline Responses ─────────────────────────────────────
+  // ── Authoritative Backend Responses (Zero Frontend Risk Simulation) ──
   private handleRiskUpdate(data: BackendRiskUpdate): void {
     const { security, transcriptSegment } = mapBackendRiskUpdate(
       data,
@@ -633,24 +576,18 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       this.transcriptCache
     );
 
-    // Keep the higher of simulated scenario attack score and real live mic risk
-    const scenarioScore = this.lastScenarioScore || 0;
-    const backendScore = security.score ?? 0;
-    const finalScore = Math.max(scenarioScore, backendScore);
-    const finalSeverity = scoreToSeverity(finalScore);
-
-    const mergedSecurity: SecurityStatus = {
-      ...(security as SecurityStatus),
-      score: finalScore,
-      severity: finalSeverity,
-    };
-
     const partial: Partial<CallSession> = {
-      security: mergedSecurity,
+      security: security as SecurityStatus,
     };
 
+    // Stable transcript update using deterministic chunk ID
     if (transcriptSegment) {
-      this.transcriptCache.push(transcriptSegment);
+      const existingIdx = this.transcriptCache.findIndex((t) => t.id === transcriptSegment.id);
+      if (existingIdx >= 0) {
+        this.transcriptCache[existingIdx] = transcriptSegment;
+      } else {
+        this.transcriptCache.push(transcriptSegment);
+      }
       partial.transcript = [...this.transcriptCache];
     }
 
@@ -667,12 +604,12 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       security: {
         score: data.risk_score,
         severity,
-        message: data.warning_message || 'Suspicious voice communication detected.',
+        message: data.warning_message || 'Voice cloning threat detected!',
         signals: [],
         voiceAuthenticity: 'altered',
         callerIdentity: 'failed',
         securityTeamNotified: true,
-        recommendation: data.recommended_action || 'Do not share sensitive information. Verify the caller.',
+        recommendation: data.recommended_action || 'Do not share sensitive information. Verify caller identity.',
       },
     };
     this.emit({
@@ -685,43 +622,4 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   private emit(event: CallEvent): void {
     this.handlers.forEach((h) => h(event));
   }
-}
-
-// ─── Initial Live Call State ─────────────────────────────────────────────────
-function buildInitialSession(callId: string, scenarioId: ScenarioId): CallSession {
-  const scenario = DEMO_SCENARIOS[scenarioId];
-  const caller: CallerIdentity = scenario?.caller || {
-    name: 'Inbound Call',
-    claimedRole: 'Direct Voice Communication',
-    organization: 'Protected Organization',
-    status: 'checking',
-    statusMessage: 'Analyzing caller voice pattern...',
-  };
-
-  const initialSeverity = scenario?.initialSeverity ?? 'SAFE';
-  const initialScore = initialSeverity === 'CRITICAL' ? 88 : initialSeverity === 'HIGH' ? 72 : initialSeverity === 'MEDIUM' ? 45 : 0;
-
-  const security: SecurityStatus = {
-    score: initialScore,
-    severity: initialSeverity,
-    message: scenario
-      ? `VoiceShield active: Monitoring ${scenario.name}`
-      : 'VoiceShield connected — listening for speech and analyzing voice patterns...',
-    signals: [],
-    voiceAuthenticity: 'unknown',
-    callerIdentity: 'checking',
-    securityTeamNotified: false,
-  };
-
-  return {
-    id: callId,
-    source: 'browser',
-    caller,
-    startTime: new Date(),
-    state: 'active',
-    security,
-    transcript: [],
-    waveformActivity: 0.05,
-    scenarioId,
-  };
 }

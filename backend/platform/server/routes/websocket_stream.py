@@ -272,3 +272,57 @@ async def websocket_org_alerts(websocket: WebSocket, organization_id: str):
     finally:
         await dispatcher.unregister_org_socket(organization_id, websocket)
         db.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. User-Scoped Notification Feed WebSocket (Incoming Calls & Personal Alerts)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.websocket("/ws/user/{user_id}")
+async def websocket_user_feed(websocket: WebSocket, user_id: str):
+    """
+    Subscribes an authenticated user's client to real-time personal events,
+    such as INCOMING_CALL and CALL_ENDED notifications.
+    Strictly isolated per user_id.
+    """
+    await websocket.accept()
+
+    db: Session = SessionLocal()
+    dispatcher = AlertDispatcher.get_instance()
+
+    # Verify user exists and is active (lookup by ID or username)
+    user = db.query(User).filter(
+        (User.id == user_id) | (User.username == user_id),
+        User.is_active == True,
+    ).first()
+    if not user:
+        log.warning("[WS:UserFeed] Rejecting connection: user '%s' not found.", user_id)
+        await websocket.send_text(
+            json.dumps({
+                "event": WebSocketEventType.ERROR,
+                "data": {"error": f"User '{user_id}' not found."},
+            })
+        )
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        db.close()
+        return
+
+    effective_user_id = user.id
+    await dispatcher.register_user_socket(effective_user_id, websocket)
+    log.info("[WS:UserFeed] User client connected for '%s' (%s).", user.username, effective_user_id)
+
+    try:
+        while True:
+            text = await websocket.receive_text()
+            try:
+                msg = json.loads(text)
+                if msg.get("type") == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+            except Exception:
+                pass
+    except WebSocketDisconnect:
+        log.info("[WS:UserFeed] User client disconnected for '%s'.", effective_user_id)
+    finally:
+        await dispatcher.unregister_user_socket(effective_user_id, websocket)
+        db.close()
+

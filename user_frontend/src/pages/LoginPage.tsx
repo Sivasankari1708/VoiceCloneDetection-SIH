@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Shield, Phone, KeyRound, RotateCcw, AlertCircle, ChevronRight, Zap } from 'lucide-react';
+import { Shield, Phone, KeyRound, RotateCcw, AlertCircle, ChevronRight, PhoneOutgoing } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/auth/authService';
 import { useAuth } from '../context/AppContext';
+import type { User } from '../types';
 import Button from '../components/ui/Button';
-import DemoController from '../components/demo/DemoController';
 
 type LoginStep = 'email' | 'otp';
 type OtpError = null | 'incorrect' | 'expired' | 'generic';
@@ -22,6 +22,14 @@ export default function LoginPage() {
   const [timeLeft, setTimeLeft] = useState(300);
   const [resendCooldown, setResendCooldown] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+
+  const routeByRole = (user: User) => {
+    if (user.role === 'CALLER' || user.role === 'ATTACKER') {
+      navigate('/attacker');
+    } else {
+      navigate('/home');
+    }
+  };
 
   // Countdown timer
   useEffect(() => {
@@ -50,12 +58,13 @@ export default function LoginPage() {
       await authService.sendOtp(identifier.trim());
       const generatedOtp = (authService as any).getDemoOtp?.() || '123456';
       setDemoOtp(generatedOtp);
+      setOtp(generatedOtp);
       setStep('otp');
       setTimeLeft(300);
       setResendCooldown(30);
     } catch {
-      // Fallback: Generate demo OTP directly
       setDemoOtp('123456');
+      setOtp('123456');
       setStep('otp');
     } finally {
       setLoading(false);
@@ -67,47 +76,27 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
     try {
-      const { token, user } = await authService.verifyOtp(identifier || 'demo_user', otp);
+      const { token, user } = await authService.verifyOtp(identifier || 'sreya@demo.com', otp);
       login(user, token);
-      navigate('/home');
-    } catch {
-      // Graceful fallback: Never block user with error modal
-      const fallbackUser = {
-        id: 'usr_guest',
-        name: identifier.includes('@') ? identifier.split('@')[0] : identifier || 'Protected User',
-        email: identifier.includes('@') ? identifier : `${identifier || 'user'}@voiceshield.app`,
-        employeeId: 'SHIELD-001',
-        organization: 'Personal Protection',
-        role: 'User',
-        avatarInitials: 'VS',
-        accountStatus: 'active' as const,
-      };
-      login(fallbackUser, 'local_demo_token');
-      navigate('/home');
+      routeByRole(user);
+    } catch (err) {
+      console.error('[LoginPage] Login failed:', err);
+      setError('incorrect');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleInstantDemo = async () => {
+  const handleLoginAs = async (email: string, pass: string) => {
     setLoading(true);
+    setError(null);
     try {
-      const { token, user } = await authService.verifyOtp('employee', 'employee123');
+      const { token, user } = await authService.verifyOtp(email, pass);
       login(user, token);
-      navigate('/home');
-    } catch {
-      const fallbackUser = {
-        id: 'usr_demo',
-        name: 'Demo User',
-        email: 'user@voiceshield.app',
-        employeeId: 'SHIELD-DEMO',
-        organization: 'Personal Shield',
-        role: 'User',
-        avatarInitials: 'DU',
-        accountStatus: 'active' as const,
-      };
-      login(fallbackUser, 'demo_token');
-      navigate('/home');
+      routeByRole(user);
+    } catch (err) {
+      console.error('[LoginPage] Login failed:', err);
+      setError('generic');
     } finally {
       setLoading(false);
     }
@@ -120,12 +109,13 @@ export default function LoginPage() {
       await authService.sendOtp(identifier);
       const newOtp = (authService as any).getDemoOtp?.() || '123456';
       setDemoOtp(newOtp);
-      setOtp('');
+      setOtp(newOtp);
       setError(null);
       setTimeLeft(300);
       setResendCooldown(30);
     } catch {
       setDemoOtp('123456');
+      setOtp('123456');
     } finally {
       setLoading(false);
     }
@@ -189,20 +179,44 @@ export default function LoginPage() {
                   <div className="w-full border-t border-slate-200" />
                 </div>
                 <span className="relative bg-white px-3 text-xs text-slate-400 uppercase font-semibold">
-                  Or One-Click Demo
+                  Or One-Click Demo Personas
                 </span>
               </div>
 
-              {/* Instant 1-Click Demo Button */}
-              <button
-                type="button"
-                onClick={handleInstantDemo}
-                disabled={loading}
-                className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shadow-sm transition-all"
-              >
-                <Zap size={16} className="text-amber-400 fill-amber-400" />
-                <span>Instant Demo Access (No OTP needed)</span>
-              </button>
+              {/* Two Authenticated Demo Personas */}
+              <div className="space-y-2.5">
+                <button
+                  type="button"
+                  onClick={() => handleLoginAs('sreya@demo.com', 'sreya123')}
+                  disabled={loading}
+                  className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold flex items-center justify-between shadow-sm transition-all cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Shield size={16} className="text-blue-200" />
+                    <div className="text-left">
+                      <div className="font-bold leading-none">Sign In as Sreya</div>
+                      <div className="text-[11px] text-blue-100 font-normal mt-0.5">Target Individual (Protected Citizen)</div>
+                    </div>
+                  </div>
+                  <ChevronRight size={16} className="text-blue-200" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleLoginAs('attacker@demo.com', 'attacker123')}
+                  disabled={loading}
+                  className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-semibold flex items-center justify-between shadow-sm transition-all cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <PhoneOutgoing size={16} className="text-amber-400" />
+                    <div className="text-left">
+                      <div className="font-bold leading-none">Sign In as Attacker</div>
+                      <div className="text-[11px] text-slate-300 font-normal mt-0.5">Caller Console (Voice Injection Terminal)</div>
+                    </div>
+                  </div>
+                  <ChevronRight size={16} className="text-slate-400" />
+                </button>
+              </div>
             </>
           ) : (
             <>
@@ -325,8 +339,6 @@ export default function LoginPage() {
           </span>
         </p>
       </div>
-
-      <DemoController currentOtp={demoOtp ?? undefined} />
     </div>
   );
 }

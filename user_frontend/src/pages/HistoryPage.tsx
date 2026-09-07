@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 import { useCallHistory } from '../context/AppContext';
-import { MOCK_CALL_HISTORY } from '../mock-data';
 import SeverityBadge from '../components/severity/SeverityBadge';
 import Card from '../components/ui/Card';
 import type { CallHistoryItem, SeverityLevel } from '../types';
@@ -67,7 +66,6 @@ export default function HistoryPage() {
   const allCalls: CallHistoryItem[] = [
     ...callHistory,
     ...backendCalls.filter(bc => !callHistory.find(c => c.id === bc.id)),
-    ...MOCK_CALL_HISTORY.filter(mc => !callHistory.find(c => c.id === mc.id) && !backendCalls.find(bc => bc.id === mc.id)),
   ].sort((a, b) => b.startTime.getTime() - a.startTime.getTime());
 
 

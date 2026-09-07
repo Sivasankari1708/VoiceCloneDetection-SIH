@@ -127,6 +127,7 @@ export interface CallSession {
 // ─── Call Events (from stream) ──────────────────────────────
 export type CallEventType =
   | 'call_started'
+  | 'call_accepted'
   | 'call_ended'
   | 'transcript_update'
   | 'security_update'
@@ -293,3 +294,19 @@ export interface BackendUserSecurityAlert {
   recommended_action: string;
   timestamp: string;
 }
+
+export interface IncomingCallData {
+  session_id: string;
+  org_id?: string;
+  user_id?: string;
+  recipient_user_id?: string;
+  caller_name?: string;
+  caller_number?: string;
+  claimed_speaker_id?: string;
+  claimed_identity_id?: string;
+  claimed_org_id?: string;
+  claimed_org_name?: string;
+  status: string;
+  start_time?: string;
+}
+

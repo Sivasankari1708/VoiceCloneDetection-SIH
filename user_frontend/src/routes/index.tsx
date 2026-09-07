@@ -1,11 +1,13 @@
+import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AppContext';
 import AppShell from '../components/layout/AppShell';
 
-// Pages — lazy imports for code splitting
+// Pages
 import LoginPage from '../pages/LoginPage';
 import HomePage from '../pages/HomePage';
 import LiveCallPage from '../pages/LiveCallPage';
+import AttackerPage from '../pages/AttackerPage';
 import SecurityAlertPage from '../pages/SecurityAlertPage';
 import IdentityPage from '../pages/IdentityPage';
 import ConversationPage from '../pages/ConversationPage';
@@ -18,37 +20,69 @@ import SecuritySettingsPage from '../pages/SecuritySettingsPage';
 import PrivacyPage from '../pages/PrivacyPage';
 import CommunicationSourcesPage from '../pages/CommunicationSourcesPage';
 
-// ─── Route Guard ──────────────────────────────────────────────
-function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+// ─── Route Guards ─────────────────────────────────────────────
+
+function RequireCitizenUser({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, user } = useAuth();
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+  if (user?.role === 'CALLER' || user?.role === 'ATTACKER') {
+    return <Navigate to="/attacker" replace />;
   }
   return <>{children}</>;
 }
 
-// ─── Authenticated Layout ─────────────────────────────────────
+function RequireAttacker({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, user } = useAuth();
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+  if (user?.role !== 'CALLER' && user?.role !== 'ATTACKER') {
+    return <Navigate to="/home" replace />;
+  }
+  return <>{children}</>;
+}
+
+// ─── Citizen Authenticated Layout ──────────────────────────────
 function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
   return (
-    <RequireAuth>
+    <RequireCitizenUser>
       <AppShell>{children}</AppShell>
-    </RequireAuth>
+    </RequireCitizenUser>
   );
 }
 
 // ─── App Routes ───────────────────────────────────────────────
 export default function AppRoutes() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
+
+  const defaultRedirect = !isAuthenticated
+    ? '/login'
+    : user?.role === 'CALLER' || user?.role === 'ATTACKER'
+    ? '/attacker'
+    : '/home';
 
   return (
     <Routes>
-      {/* Public */}
+      {/* Public Login */}
       <Route
         path="/login"
-        element={isAuthenticated ? <Navigate to="/home" replace /> : <LoginPage />}
+        element={isAuthenticated ? <Navigate to={defaultRedirect} replace /> : <LoginPage />}
       />
 
-      {/* Authenticated */}
+      {/* Dedicated Caller / Attacker Console (Laptop A) */}
+      <Route
+        path="/attacker"
+        element={
+          <RequireAttacker>
+            <AttackerPage />
+          </RequireAttacker>
+        }
+      />
+      <Route path="/sender" element={<Navigate to="/attacker" replace />} />
+
+      {/* Citizen Dashboard (Laptop B - Sreya) */}
       <Route path="/home" element={<AuthenticatedLayout><HomePage /></AuthenticatedLayout>} />
       <Route path="/live" element={<AuthenticatedLayout><LiveCallPage /></AuthenticatedLayout>} />
       <Route path="/alert" element={<AuthenticatedLayout><SecurityAlertPage /></AuthenticatedLayout>} />
@@ -63,9 +97,9 @@ export default function AppRoutes() {
       <Route path="/privacy" element={<AuthenticatedLayout><PrivacyPage /></AuthenticatedLayout>} />
       <Route path="/settings/sources" element={<AuthenticatedLayout><CommunicationSourcesPage /></AuthenticatedLayout>} />
 
-      {/* Default redirect */}
-      <Route path="/" element={<Navigate to={isAuthenticated ? '/home' : '/login'} replace />} />
-      <Route path="*" element={<Navigate to={isAuthenticated ? '/home' : '/login'} replace />} />
+      {/* Default redirects */}
+      <Route path="/" element={<Navigate to={defaultRedirect} replace />} />
+      <Route path="*" element={<Navigate to={defaultRedirect} replace />} />
     </Routes>
   );
 }

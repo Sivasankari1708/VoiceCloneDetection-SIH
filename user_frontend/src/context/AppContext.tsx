@@ -7,7 +7,6 @@ import type {
   SecuritySettings,
   ScenarioId,
 } from '../types';
-import { MOCK_NOTIFICATIONS } from '../mock-data';
 
 // ─── State Shape ──────────────────────────────────────────────
 interface AppState {
@@ -65,22 +64,13 @@ function getSavedInitialState(): AppState {
     if (uStr) user = JSON.parse(uStr);
   } catch {}
   return {
-    isAuthenticated: Boolean(token),
-    user: user ?? (token ? {
-      id: 'user_employee_001',
-      name: 'Priya Sundaram',
-      email: 'priya.s@apexfin.com',
-      employeeId: 'EMP-4821',
-      organization: 'Apex Financial Corp',
-      role: 'Finance Operations Lead',
-      avatarInitials: 'PS',
-      accountStatus: 'active',
-    } : null),
+    isAuthenticated: Boolean(token && user),
+    user: user,
     token,
     activeCall: null,
-    selectedScenarioId: (localStorage.getItem('voiceshield_selected_scenario') as ScenarioId) || 'genuine_executive',
+    selectedScenarioId: null,
     callHistory: [],
-    notifications: MOCK_NOTIFICATIONS,
+    notifications: [],
     settings: DEFAULT_SETTINGS,
   };
 }
@@ -112,7 +102,7 @@ function reducer(state: AppState, action: Action): AppState {
         isAuthenticated: false,
         user: null,
         token: null,
-        notifications: MOCK_NOTIFICATIONS,
+        notifications: [],
       };
 
     case 'SET_ACTIVE_CALL':

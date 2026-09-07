@@ -1,15 +1,20 @@
 import { useNavigate } from 'react-router-dom';
 import { CheckCircle, XCircle, HelpCircle, Loader2, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { useActiveCall } from '../context/AppContext';
-import { MOCK_CALLERS } from '../mock-data';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
-import type { IdentityStatus } from '../types';
+import type { IdentityStatus, CallerIdentity } from '../types';
 
 export default function IdentityPage() {
   const navigate = useNavigate();
   const { activeCall } = useActiveCall();
-  const caller = activeCall?.caller ?? MOCK_CALLERS.rajesh_kumar;
+  const caller: CallerIdentity = activeCall?.caller ?? {
+    name: 'Direct Call',
+    claimedRole: 'Inbound Stream',
+    organization: 'VoiceShield Protection',
+    status: 'unverified',
+    statusMessage: 'No active identity verification in progress',
+  };
   const status: IdentityStatus = caller.status;
 
   const STATUS_CONFIG = {

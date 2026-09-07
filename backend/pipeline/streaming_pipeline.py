@@ -759,7 +759,7 @@ class StreamingAudioPipeline:
 
         # ── 7. faster-whisper Speech-to-Text on Current Chunk ───────────────
         t0 = time.perf_counter()
-        asr_res: ASRResult = self.pipeline.whisper_asr.transcribe(chunk_waveform, vad_filter=False)
+        asr_res: ASRResult = self.pipeline.whisper_asr.transcribe(chunk_waveform, vad_filter=True)
         timings["whisper_asr_ms"] = (time.perf_counter() - t0) * 1000.0
 
         chunk_text = asr_res.transcript

@@ -2,15 +2,16 @@ import type { CallEvent, CallSession, ScenarioId, CallerIdentity, SecurityStatus
 import { DEMO_SCENARIOS, buildScenarioEvents } from '../../mock-data/scenarios';
 import { scoreToSeverity } from '../../utils/dataMapper';
 import { config } from '../config';
-import { WebSocketLiveCallStreamImpl } from './webSocketLiveCallStream';
+import { WebSocketLiveCallStreamImpl, type StartCallParams } from './webSocketLiveCallStream';
 
 // ─── Live Call Stream Interface ───────────────────────────────
 // UI components depend only on this interface — never on the implementation.
 
 export interface LiveCallStream {
   subscribe(handler: (event: CallEvent) => void): () => void;
-  start(scenarioId: ScenarioId, callId: string): void;
-  stop(): void;
+  start(scenarioOrParams?: string | StartCallParams, callIdFallback?: string): void;
+  stop(terminateBackendSession?: boolean, reason?: string): void;
+  terminate(reason?: string): void;
   isActive(): boolean;
   setMicEnabled(enabled: boolean): void;
 }
@@ -22,6 +23,10 @@ class MockLiveCallStreamImpl implements LiveCallStream {
   private active = false;
 
   setMicEnabled(_enabled: boolean): void {}
+
+  terminate(_reason: string = 'NORMAL_HANGUP'): void {
+    this.stop();
+  }
 
   subscribe(handler: (event: CallEvent) => void): () => void {
     this.handlers.push(handler);

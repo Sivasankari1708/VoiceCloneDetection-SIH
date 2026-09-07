@@ -18,6 +18,18 @@ class CallStartRequest(BaseModel):
         None,
         description="Claimed speaker identity (e.g. enrolled speaker ID of VIP/CFO) for biometric verification.",
     )
+    claimed_org_id: Optional[str] = Field(
+        None,
+        description="Claimed organization ID being represented/impersonated.",
+    )
+    claimed_org_name: Optional[str] = Field(
+        None,
+        description="Claimed organization display name being represented/impersonated.",
+    )
+    recipient_user_id: Optional[str] = Field(
+        None,
+        description="Target user ID of the intended call recipient.",
+    )
 
 
 class CallEndRequest(BaseModel):
@@ -26,11 +38,14 @@ class CallEndRequest(BaseModel):
 
 class CallSessionDto(BaseModel):
     session_id: str
-    org_id: str
+    org_id: Optional[str] = None
     user_id: Optional[str] = None
+    recipient_user_id: Optional[str] = None
     caller_number: Optional[str] = None
     caller_name: Optional[str] = None
     claimed_speaker_id: Optional[str] = None
+    claimed_org_id: Optional[str] = None
+    claimed_org_name: Optional[str] = None
     status: str
     start_time: Optional[str] = None
     end_time: Optional[str] = None

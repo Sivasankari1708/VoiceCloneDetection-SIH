@@ -1,7 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, MessageSquare, Info } from 'lucide-react';
-import { useActiveCall } from '../context/AppContext';
-import { MOCK_CALL_HISTORY } from '../mock-data';
+import { useActiveCall, useCallHistory } from '../context/AppContext';
 import TranscriptDisplay from '../components/call/TranscriptDisplay';
 import ConversationSignalTag from '../components/call/ConversationSignalTag';
 import Card from '../components/ui/Card';
@@ -20,9 +19,11 @@ const SIGNAL_EXPLANATIONS: Record<string, string> = {
 export default function ConversationPage() {
   const navigate = useNavigate();
   const { activeCall } = useActiveCall();
+  const { callHistory } = useCallHistory();
 
-  const transcript = activeCall?.transcript ?? MOCK_CALL_HISTORY[0].transcript;
-  const signals: ConversationSignal[] = activeCall?.security.signals ?? MOCK_CALL_HISTORY[0].signals;
+  const latestHistory = callHistory[0];
+  const transcript = activeCall?.transcript ?? latestHistory?.transcript ?? [];
+  const signals: ConversationSignal[] = activeCall?.security.signals ?? latestHistory?.signals ?? [];
 
   return (
     <div className="max-w-2xl mx-auto p-4 md:p-6 space-y-5">

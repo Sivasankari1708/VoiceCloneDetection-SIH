@@ -30,7 +30,7 @@ def test_websocket_stream_chunk_and_risk_update(ws_client, monkeypatch):
     session_id = f"ws_stream_test_{uuid.uuid4().hex[:8]}"
     db = SessionLocal()
     try:
-        user = db.query(User).filter_by(username="employee").first()
+        user = db.query(User).filter_by(username="operator").first()
         call = CallSession(
             session_id=session_id,
             org_id=user.org_id,
@@ -108,15 +108,16 @@ def test_websocket_dual_alert_on_critical_voice_clone(ws_client, monkeypatch):
     """
     db = SessionLocal()
     try:
-        user = db.query(User).filter_by(username="employee").first()
-        org_id = user.org_id
+        user = db.query(User).filter_by(username="sreya").first()
+        org_id = "org_demo_001"
         session_id = f"ws_critical_{uuid.uuid4().hex[:8]}"
         call = CallSession(
             session_id=session_id,
             org_id=org_id,
-            user_id=user.id,
+            recipient_user_id=user.id,
             status="ACTIVE",
             claimed_speaker_id="LA_0069",  # CFO speaker
+            claimed_org_id=org_id,
         )
         db.add(call)
         db.commit()
@@ -185,3 +186,70 @@ def test_websocket_dual_alert_on_critical_voice_clone(ws_client, monkeypatch):
             assert org_msg["data"]["session_id"] == session_id
             assert org_msg["data"]["scenario"] == "AI_CLONE_ENROLLED_SPEAKER"
             assert org_msg["data"]["risk_score"] >= 95.0
+
+
+def test_user_websocket_incoming_call_and_isolation(ws_client):
+    """
+    Verify:
+    1. Target user receives INCOMING_CALL and CALL_ENDED on user-scoped WebSocket.
+    2. Unrelated users do NOT receive the incoming call.
+    """
+    db = SessionLocal()
+    try:
+        sreya = db.query(User).filter_by(username="sreya").first()
+        operator_b = db.query(User).filter_by(username="operator_b").first()
+        caller = db.query(User).filter_by(username="caller").first()
+        assert sreya is not None
+        assert operator_b is not None
+        assert caller is not None
+        sreya_id = sreya.id
+        operator_b_id = operator_b.id
+        caller_token = create_access_token(caller)
+    finally:
+        db.close()
+
+    # Sreya and Operator B both connect to their user-scoped WebSockets
+    with ws_client.websocket_connect(f"/ws/user/{sreya_id}") as sreya_ws:
+        with ws_client.websocket_connect(f"/ws/user/{operator_b_id}") as other_ws:
+            # Caller initiates call targeting Sreya
+            start_payload = {
+                "recipient_user_id": sreya_id,
+                "caller_name": "Executive Caller",
+                "claimed_speaker_id": "LA_0069",
+            }
+            res = ws_client.post(
+                "/api/calls/start",
+                json=start_payload,
+                headers={"Authorization": f"Bearer {caller_token}"},
+            )
+            assert res.status_code == 201
+            session_data = res.json()
+            session_id = session_data["session_id"]
+
+            # Sreya must receive INCOMING_CALL
+            sreya_raw = sreya_ws.receive_text()
+            sreya_msg = json.loads(sreya_raw)
+            assert sreya_msg["event"] == WebSocketEventType.INCOMING_CALL
+            assert sreya_msg["data"]["session_id"] == session_id
+            assert sreya_msg["data"]["recipient_user_id"] == sreya_id
+            assert sreya_msg["data"]["caller_name"] == "Executive Caller"
+
+            # Caller ends call
+            end_res = ws_client.post(
+                f"/api/calls/{session_id}/end",
+                json={"reason": "NORMAL_HANGUP"},
+                headers={"Authorization": f"Bearer {caller_token}"},
+            )
+            assert end_res.status_code == 200
+
+            # Sreya receives CALL_ENDED
+            sreya_end_raw = sreya_ws.receive_text()
+            sreya_end_msg = json.loads(sreya_end_raw)
+            assert sreya_end_msg["event"] == WebSocketEventType.CALL_ENDED
+            assert sreya_end_msg["data"]["session_id"] == session_id
+
+            # Other user must have received zero call messages - ping check
+            other_ws.send_text(json.dumps({"type": "ping"}))
+            other_pong = json.loads(other_ws.receive_text())
+            assert other_pong.get("type") == "pong"
+

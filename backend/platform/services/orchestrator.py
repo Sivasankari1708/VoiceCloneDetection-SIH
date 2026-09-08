@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from backend.intent.identity_claim_extractor import extract_identity_claim
 from backend.platform.db.models import (
     AuditLog,
     CallSession,
@@ -238,12 +239,89 @@ class SecurityOrchestrator:
             claimed_speaker_id=call.claimed_speaker_id,
         )
 
+        # 1.5 Conversational Identity & Organization Claim Extraction
+        # If speaker/org identity was not established yet, parse speech dialogue
+        if not call.claimed_speaker_id and telemetry.accumulated_transcript:
+            claim_res = extract_identity_claim(telemetry.accumulated_transcript, self.db)
+            if claim_res.has_claim:
+                if claim_res.protected_identity:
+                    call.claimed_speaker_id = claim_res.protected_identity.speaker_id
+                    call.claimed_identity_id = claim_res.protected_identity.id
+                    call.caller_name = f"{claim_res.protected_identity.full_name} (Claimed)"
+
+                    # Dynamically attach enrolled reference embedding to running streaming session
+                    ref_emb = self.ai_adapter.speaker_repo.get_reference_embedding(claim_res.protected_identity.speaker_id)
+                    session = self.ai_adapter.get_session(session_id)
+                    if session and ref_emb is not None:
+                        session.speaker_id = claim_res.protected_identity.speaker_id
+                        session.reference_embedding = ref_emb
+
+                        # Re-verify speaker against the newly attached reference embedding
+                        rolling_buf = session.get_audio_buffer()
+                        if len(rolling_buf) > 0:
+                            spk_res = self.ai_adapter.pipeline.speaker_verifier.verify_speaker(rolling_buf, ref_emb)
+                            telemetry.raw_speaker_sim = float(spk_res.speaker_similarity)
+                            telemetry.speaker_match = bool(spk_res.speaker_match)
+                            telemetry.smoothed_speaker_sim = float(spk_res.speaker_similarity)
+                elif claim_res.claimed_person:
+                    call.caller_name = f"{claim_res.claimed_person} (Claimed)"
+
+                # Handle claimed organization
+                if claim_res.is_registered_org and claim_res.organization:
+                    call.claimed_org_id = claim_res.organization.id
+                    call.claimed_org_name = claim_res.organization.name
+                    call.org_id = claim_res.organization.id
+                    org_id = claim_res.organization.id
+                elif claim_res.claimed_org_name:
+                    call.claimed_org_id = None
+                    call.claimed_org_name = claim_res.claimed_org_name
+                    call.org_id = None
+                    org_id = None
+
         # 2. Retrieve Protected Identity and Security Policy context
         protected_identity = None
         if call.claimed_speaker_id:
             protected_identity = self.db.query(ProtectedIdentity).filter_by(
                 speaker_id=call.claimed_speaker_id
             ).first()
+
+        # 2.5 Security Semantics & Biometric Identity Status Determination
+        effective_synth = (
+            telemetry.smoothed_synthetic_prob
+            if telemetry.smoothed_synthetic_prob is not None
+            else telemetry.raw_synthetic_prob
+        )
+        effective_sim = (
+            telemetry.smoothed_speaker_sim
+            if telemetry.smoothed_speaker_sim is not None
+            else telemetry.raw_speaker_sim
+        )
+
+        if not call.claimed_speaker_id:
+            # Caller never claimed an enrolled protected identity
+            telemetry.identity_status = "UNVERIFIED"
+            if effective_synth is not None and effective_synth >= 0.60:
+                telemetry.verdict = "cloned"
+            else:
+                telemetry.verdict = "genuine"
+        else:
+            # Caller claimed an enrolled protected identity (e.g. Rajesh Malhotra)
+            if effective_sim is not None:
+                if effective_sim >= 0.70 and (effective_synth is not None and effective_synth < 0.40):
+                    telemetry.identity_status = "VERIFIED"
+                    telemetry.verdict = "genuine"
+                elif effective_sim >= 0.70 and (effective_synth is not None and effective_synth >= 0.60):
+                    telemetry.identity_status = "IDENTITY_MISMATCH"
+                    telemetry.verdict = "cloned"
+                elif effective_sim < 0.50:
+                    telemetry.identity_status = "IDENTITY_MISMATCH"
+                    telemetry.verdict = "imposter"
+                else:
+                    telemetry.identity_status = "VERIFICATION_DEGRADED"
+                    telemetry.verdict = "inconclusive"
+            else:
+                telemetry.identity_status = "VERIFICATION_DEGRADED"
+                telemetry.verdict = "inconclusive"
 
         policy = self.db.query(SecurityPolicy).filter_by(org_id=org_id).first() if org_id else None
 
@@ -366,12 +444,17 @@ class SecurityOrchestrator:
 
         # A. USER SECURITY ALERT (to active caller recipient)
         if policy_eval.should_warn_user:
-            claimed_label = protected_identity.full_name if protected_identity else (call.caller_name or call.claimed_speaker_id)
+            claimed_label = protected_identity.full_name if protected_identity else (call.caller_name if (call.caller_name and "Claimed" in call.caller_name) else "UNVERIFIED")
+            default_warning = (
+                f"CRITICAL: Possible AI voice clone impersonating {claimed_label}! Do NOT transfer funds or disclose sensitive info."
+                if claimed_label != "UNVERIFIED"
+                else "CRITICAL: Synthetic speech detected from unverified caller! Do NOT transfer funds or disclose sensitive info."
+            )
             user_alert = UserSecurityAlertPayload(
                 session_id=session_id,
                 severity=policy_eval.risk_level,
                 risk_score=policy_eval.risk_score,
-                warning_message=policy_eval.warning_message or f"CRITICAL: Possible AI voice clone impersonating {claimed_label}! Do NOT transfer funds or disclose sensitive info.",
+                warning_message=policy_eval.warning_message or default_warning,
                 claimed_identity=claimed_label,
                 reasons=policy_eval.reasons,
                 recommended_action=policy_eval.recommended_action,

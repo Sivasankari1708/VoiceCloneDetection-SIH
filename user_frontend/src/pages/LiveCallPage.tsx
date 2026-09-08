@@ -269,6 +269,28 @@ export default function LiveCallPage() {
     );
   }
 
+  if (!querySessionId && !activeCall) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[70vh] p-6 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-500 mb-4 shadow-sm">
+          <PhoneOff size={28} className="text-slate-400" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-800">No Active Call Session</h2>
+        <p className="text-slate-500 text-sm mt-1.5 max-w-md">
+          There is no active incoming call to analyze. When an incoming call is placed to your account, VoiceShield will prompt you to accept and monitor live.
+        </p>
+        <div className="mt-6 flex flex-wrap gap-3 justify-center">
+          <Button variant="primary" size="md" onClick={() => navigate('/')}>
+            Return to Dashboard
+          </Button>
+          <Button variant="outline" size="md" onClick={() => navigate('/attacker')}>
+            Open Attacker Console
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!activeCall) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[70vh] p-4 text-center">
@@ -345,7 +367,7 @@ export default function LiveCallPage() {
             )}
             <span className="text-slate-300">•</span>
             <span className="text-slate-600 font-medium truncate">
-              {isRecipientMode ? 'Mode: Recipient Live Monitoring' : 'Mode: Direct Live Stream'}
+              {isRecipientMode ? 'Mode: Recipient Live Monitoring' : 'Mode: Audio Transmission Stream'}
             </span>
           </div>
         </div>

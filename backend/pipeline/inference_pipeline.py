@@ -104,7 +104,7 @@ class InferencePipeline:
             vad=self.vad,
             repository=speaker_repository,
         )
-        self.whisper_asr = whisper_asr or WhisperASR(model_size_or_path="base", device="cpu")
+        self.whisper_asr = whisper_asr or WhisperASR(model_size_or_path="base.en", device="cpu")
         self.intent_detector = intent_detector or IntentDetector()
 
         init_ms = (time.perf_counter() - t0) * 1000.0

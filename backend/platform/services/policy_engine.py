@@ -130,17 +130,34 @@ class PolicyEngine:
             should_create_incident = True
 
             if risk_level == "CRITICAL":
-                warning_message = (
-                    "🚨 CRITICAL SECURITY WARNING: Potential AI Voice Clone Impersonation Detected! "
-                    "Do NOT share passwords, OTPs, or transfer funds."
-                )
+                if protected_identity and scenario == "AI_CLONE_ENROLLED_SPEAKER":
+                    warning_message = (
+                        f"🚨 CRITICAL SECURITY WARNING: Potential AI Voice Clone Impersonation of {vip_name} Detected! "
+                        "Do NOT share passwords, OTPs, or transfer funds."
+                    )
+                elif scenario == "UNKNOWN_AI_VOICE":
+                    warning_message = (
+                        "🚨 CRITICAL SECURITY WARNING: Synthetic Speech with Suspicious Intent Detected from Unverified Caller! "
+                        "Do NOT share OTPs, credentials, or transfer funds."
+                    )
+                else:
+                    warning_message = (
+                        "🚨 CRITICAL SECURITY WARNING: Severe Voice Anomaly or Coercive Intent Detected! "
+                        "Do NOT share sensitive information."
+                    )
                 if policy and policy.to_dict().get("policy_config", {}).get("auto_block_on_critical_clone", False):
                     is_blocked = True
             else:
-                warning_message = (
-                    "⚠️ SECURITY WARNING: Suspicious voice activity or identity mismatch detected. "
-                    "Exercise caution and verify caller identity."
-                )
+                if protected_identity and scenario == "DIFFERENT_GENUINE_SPEAKER":
+                    warning_message = (
+                        f"⚠️ IDENTITY MISMATCH: Caller voice does NOT match enrolled biometric profile of {vip_name}. "
+                        "Potential human imposter. Exercise caution."
+                    )
+                else:
+                    warning_message = (
+                        "⚠️ SECURITY WARNING: Suspicious voice activity or unverified caller identity. "
+                        "Exercise caution and verify caller identity."
+                    )
 
         return PolicyEvaluationResult(
             risk_score=risk_score,

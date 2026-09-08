@@ -63,6 +63,16 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
         db.close()
         return
 
+    if call.status in ("ENDED", "TERMINATED", "TERMINATED_BY_SECURITY"):
+        log.warning("[WS:Stream] Session '%s' has already ended (status=%s); rejecting connection.", session_id, call.status)
+        await websocket.send_text(json.dumps({
+            "event": WebSocketEventType.ERROR,
+            "data": {"error": f"Call session '{session_id}' has already ended."},
+        }))
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        db.close()
+        return
+
     await dispatcher.register_call_socket(session_id, websocket)
     log.info("[WS:Stream] Active streaming connected for session '%s' (status=%s).", session_id, call.status)
 

@@ -72,11 +72,11 @@ async def start_call(
         target_recipient_id = user.id
 
     caller_user_id = user.id if user else None
-    caller_display_name = req.caller_name or (user.full_name if user else "External Caller")
+    caller_display_name = req.caller_name or "Incoming Call"
 
     orchestrator = SecurityOrchestrator(db=db)
     call = orchestrator.start_call_session(
-        org_id=req.claimed_org_id or (user.org_id if user else None),
+        org_id=req.claimed_org_id,
         session_id=req.session_id,
         user_id=caller_user_id,
         recipient_user_id=target_recipient_id,
@@ -265,16 +265,10 @@ async def report_call_risk(
     """
     call = db.query(CallSession).filter_by(session_id=session_id).first()
     if not call:
-        demo_user = _resolve_call_user(None, db)
-        call = CallSession(
-            session_id=session_id,
-            org_id=demo_user.org_id,
-            user_id=demo_user.id,
-            status="ACTIVE",
-            caller_name=payload.get("claimed_identity", "Simulator Caller"),
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Call session '{session_id}' not found.",
         )
-        db.add(call)
-        db.commit()
 
     risk_data = payload.get("data", payload)
     scenario = risk_data.get("scenario", "attack_simulation")
@@ -336,7 +330,7 @@ async def report_call_risk(
                     "severity": active_incident.severity,
                     "scenario": active_incident.scenario,
                     "risk_score": active_incident.current_risk_score,
-                    "source": "SIMULATOR_SCENARIO",
+                    "source": "REAL_TIME_RISK_REPORT",
                 }),
             )
             db.add(audit)

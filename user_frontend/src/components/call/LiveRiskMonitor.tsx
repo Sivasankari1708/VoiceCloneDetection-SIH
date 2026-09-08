@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldAlert, ShieldCheck, AlertTriangle, Activity, UserCheck, Zap, Lock } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, AlertTriangle, Activity, UserCheck, Zap } from 'lucide-react';
 import type { SecurityStatus, CallerIdentity, SeverityLevel } from '../../types';
 
 interface LiveRiskMonitorProps {
@@ -56,44 +56,52 @@ export const LiveRiskMonitor: React.FC<LiveRiskMonitorProps> = ({
 }) => {
   const sevConfig = SEVERITY_CONFIGS[security.severity] || SEVERITY_CONFIGS.SAFE;
 
-  // Format Synthetic Voice %
-  const syntheticPct = security.syntheticProbability !== undefined
-    ? Math.round(security.syntheticProbability * 100)
-    : security.score > 70
-    ? Math.min(99, Math.round(security.score * 0.95))
-    : Math.max(2, Math.round(security.score * 0.4));
+  // 1. Dynamic Synthetic Voice %
+  const hasSynthetic = security.syntheticProbability !== undefined && security.syntheticProbability !== null;
+  const syntheticPct = hasSynthetic ? Math.round((security.syntheticProbability ?? 0) * 100) : null;
+  const syntheticDisplay = syntheticPct !== null ? `${syntheticPct}%` : 'ANALYZING';
+  const syntheticSubtitle = syntheticPct !== null
+    ? syntheticPct >= 60
+      ? 'Synthetic speech detected'
+      : 'Natural acoustic spectrum'
+    : 'Evaluating voice frames';
 
-  // Format Speaker Match %
-  const speakerMatchPct = security.speakerSimilarity !== undefined
-    ? Math.round(security.speakerSimilarity * 100)
-    : security.callerIdentity === 'verified'
-    ? 94
-    : security.callerIdentity === 'failed'
-    ? 22
-    : 87;
+  // 2. Dynamic Speaker Verification % (or NOT AVAILABLE)
+  const hasSpeakerSim = security.speakerSimilarity !== undefined && security.speakerSimilarity !== null;
+  const speakerMatchPct = hasSpeakerSim ? Math.round((security.speakerSimilarity ?? 0) * 100) : null;
+  const speakerDisplay = speakerMatchPct !== null ? `${speakerMatchPct}%` : 'NOT AVAILABLE';
+  const speakerSubtitle = speakerMatchPct !== null
+    ? (security.callerIdentity === 'verified'
+        ? 'Verified baseline voice'
+        : 'Biometric mismatch against claimed profile')
+    : 'No reference profile claimed';
 
-  // Format Intent
+  // 3. Dynamic Identity Claim
+  const isIdentityClaimed = caller.name && caller.name !== 'Incoming Call' && caller.name !== 'Unknown Caller' && caller.name !== 'Inbound Call';
+  const cleanClaimedName = isIdentityClaimed ? caller.name.replace(/\s*\(Claimed\)/i, '').trim() : 'UNVERIFIED';
+
+  // 4. Format Intent
   const rawIntent = security.intent || (security.signals[0]?.label ?? 'Normal Conversation');
   const formattedIntent = rawIntent
     .replace(/_/g, ' ')
     .toLowerCase()
     .replace(/\b\w/g, (l) => l.toUpperCase());
 
-  // Format Identity
-  const identityName = caller.claimedRole
-    ? `${caller.name} (${caller.claimedRole})`
-    : caller.name || 'Caller';
-
-  // Format Security Action
+  // 5. Recommended Action
   let currentAction = security.action || 'MONITOR';
+  let actionAdvice = 'Continue monitoring conversation.';
   if (security.severity === 'CRITICAL') {
-    currentAction = 'BLOCK / VERIFY';
+    currentAction = 'BLOCK / TERMINATE';
+    actionAdvice = 'Do not share OTP, credentials, or transfer funds. Disconnect immediately.';
   } else if (security.severity === 'HIGH') {
-    currentAction = 'STEP-UP AUTH / VERIFY';
+    currentAction = 'REQUIRE VERIFICATION';
+    actionAdvice = 'Verify caller identity through a separate trusted out-of-band channel.';
   } else if (security.severity === 'MEDIUM') {
-    currentAction = 'MONITOR / CAUTION';
+    currentAction = 'CAUTION / MONITOR';
+    actionAdvice = 'Exercise caution before executing any requests.';
   } else if (security.severity === 'SAFE') {
-    currentAction = 'ALLOW / PASS';
+    currentAction = 'ALLOW / SAFE';
+    actionAdvice = 'Natural acoustic patterns verified. No threat signals detected.';
   }
 
   return (
@@ -103,18 +111,18 @@ export const LiveRiskMonitor: React.FC<LiveRiskMonitorProps> = ({
         <div className="flex items-center gap-2">
           <Activity size={18} className="text-cyan-400 animate-pulse" />
           <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-            Live Continuous Risk Monitor
+            VoiceShield Real-Time Analysis
           </span>
         </div>
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-            REAL-TIME PIPELINE
+            LIVE PIPELINE
           </span>
         </div>
       </div>
 
-      {/* Main Grid matching Member 3 spec */}
+      {/* Main Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
         {/* Metric 1 & 2: Risk Score and Risk Level */}
         <div className={`p-4 rounded-xl border ${sevConfig.border} ${sevConfig.bg} transition-all`}>
@@ -166,13 +174,13 @@ export const LiveRiskMonitor: React.FC<LiveRiskMonitorProps> = ({
             <div className="p-2.5 rounded-lg bg-slate-800/80 border border-slate-700/50">
               <div className="text-[11px] text-slate-400 uppercase font-semibold flex items-center gap-1.5">
                 <Zap size={13} className="text-indigo-400" />
-                Synthetic Voice
+                Voice Authenticity
               </div>
-              <div className="text-2xl font-bold mt-1 text-slate-100">
-                {syntheticPct}%
+              <div className="text-xl font-bold mt-1 text-slate-100">
+                {syntheticDisplay}
               </div>
-              <div className="text-[10px] text-slate-400 mt-0.5">
-                {syntheticPct > 70 ? 'High synthetic probability' : 'Natural acoustic spectrum'}
+              <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                {syntheticSubtitle}
               </div>
             </div>
 
@@ -181,54 +189,50 @@ export const LiveRiskMonitor: React.FC<LiveRiskMonitorProps> = ({
                 <UserCheck size={13} className="text-emerald-400" />
                 Speaker Match
               </div>
-              <div className="text-2xl font-bold mt-1 text-slate-100">
-                {speakerMatchPct}%
+              <div className={`text-xl font-bold mt-1 ${speakerMatchPct !== null ? 'text-slate-100' : 'text-slate-400 text-sm font-semibold'}`}>
+                {speakerDisplay}
               </div>
-              <div className="text-[10px] text-slate-400 mt-0.5">
-                {security.callerIdentity === 'verified'
-                  ? 'Verified baseline voice'
-                  : security.callerIdentity === 'failed'
-                  ? 'Voice mismatch detected'
-                  : 'Compared to enrolled profile'}
+              <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                {speakerSubtitle}
               </div>
             </div>
           </div>
 
           <div className="text-[11px] text-slate-400 mt-2 flex items-center justify-between pt-2 border-t border-slate-700/50">
-            <span>Biometric Profile:</span>
-            <span className="font-semibold text-slate-200">
-              {caller.organization || 'Corporate Directory'}
+            <span>Claimed Identity:</span>
+            <span className={`font-semibold ${isIdentityClaimed ? 'text-cyan-300' : 'text-slate-400'}`}>
+              {cleanClaimedName}
             </span>
           </div>
         </div>
 
-        {/* Metric 5 & 6: Intent & Identity */}
+        {/* Metric 5 & 6: Intent & Signals */}
         <div className="p-4 rounded-xl border border-slate-800 bg-slate-800/40">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <div className="text-[11px] text-slate-400 uppercase font-semibold">Intent</div>
+              <div className="text-[11px] text-slate-400 uppercase font-semibold">Conversational Intent</div>
               <div className="text-base font-bold text-amber-300 mt-1 flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-amber-400" />
                 <span className="truncate">{formattedIntent}</span>
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5">
-                {security.signals.length > 0 ? `${security.signals.length} signal(s) flagged` : 'Natural speech flow'}
+                {security.signals.length > 0 ? `${security.signals.length} threat signal(s) detected` : 'Natural speech flow'}
               </div>
             </div>
 
             <div>
-              <div className="text-[11px] text-slate-400 uppercase font-semibold">Identity</div>
+              <div className="text-[11px] text-slate-400 uppercase font-semibold">Verification Status</div>
               <div className="text-base font-bold text-slate-100 mt-1 truncate">
-                {identityName}
+                {security.callerIdentity ? security.callerIdentity.toUpperCase() : 'UNVERIFIED'}
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5">
-                Status: <span className="font-semibold text-slate-300 uppercase">{caller.status}</span>
+                Target: <span className="font-semibold text-slate-300">Sreya Sengupta (Citizen)</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Metric 7: Current Security Action */}
+        {/* Metric 7: Recommended Action */}
         <div
           className={`p-4 rounded-xl border flex flex-col justify-between ${
             security.severity === 'CRITICAL'
@@ -239,14 +243,11 @@ export const LiveRiskMonitor: React.FC<LiveRiskMonitorProps> = ({
           }`}
         >
           <div>
-            <div className="text-[11px] text-slate-400 uppercase font-semibold flex items-center gap-1.5">
-              <Lock size={13} className={security.severity === 'CRITICAL' ? 'text-rose-400' : 'text-slate-400'} />
-              Current Security Action
-            </div>
+            <div className="text-[11px] text-slate-400 uppercase font-semibold">Recommended Action</div>
             <div
-              className={`text-xl font-extrabold mt-1 tracking-wide ${
+              className={`text-sm font-extrabold mt-1 ${
                 security.severity === 'CRITICAL'
-                  ? 'text-rose-400 animate-pulse'
+                  ? 'text-rose-400'
                   : security.severity === 'HIGH'
                   ? 'text-orange-400'
                   : 'text-emerald-400'
@@ -254,12 +255,9 @@ export const LiveRiskMonitor: React.FC<LiveRiskMonitorProps> = ({
             >
               {currentAction}
             </div>
-          </div>
-          <div className="text-[11px] text-slate-300 mt-2 font-medium">
-            {security.recommendation ||
-              (security.severity === 'CRITICAL'
-                ? 'Terminate call or require secondary out-of-band verification immediately.'
-                : 'Maintain standard verification protocols.')}
+            <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
+              {actionAdvice}
+            </p>
           </div>
         </div>
       </div>

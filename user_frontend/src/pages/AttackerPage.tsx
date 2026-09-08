@@ -10,9 +10,7 @@ import {
   Activity,
   RefreshCw,
   LogOut,
-  AlertTriangle,
-  UserCheck,
-  Zap,
+  Volume2,
 } from 'lucide-react';
 import { config } from '../services/config';
 import { authService } from '../services/auth/authService';
@@ -20,7 +18,6 @@ import { useAuth } from '../context/AppContext';
 import { WebSocketLiveCallStreamImpl } from '../services/calls/webSocketLiveCallStream';
 import { userSocketService } from '../services/calls/userSocketService';
 import type { CallEvent } from '../types';
-import SeverityBadge from '../components/severity/SeverityBadge';
 import LiveVoiceWaveform from '../components/waveform/LiveVoiceWaveform';
 
 interface BackendUserSummary {
@@ -42,90 +39,43 @@ const SEEDED_FALLBACK_RECIPIENTS: BackendUserSummary[] = [
   {
     id: 'user_caller_001',
     username: 'caller',
-    full_name: 'Aarav Sharma (External Citizen)',
+    full_name: 'Aarav Sharma (Citizen)',
     email: 'aarav@external.net',
     role: 'USER',
   },
 ];
 
-interface AttackScenario {
+interface TestAudioSource {
   id: string;
   name: string;
   description: string;
-  type: 'file' | 'mic';
-  sampleUrl?: string;
-  callerName: string;
-  claimedSpeakerId: string;
-  claimedOrgId: string;
-  claimedOrgName: string;
-  badge: string;
-  badgeColor: string;
+  sampleUrl: string;
 }
 
-const ATTACK_SCENARIOS: AttackScenario[] = [
+const TEST_AUDIO_SOURCES: TestAudioSource[] = [
   {
-    id: 'ai_clone_cfo_voice',
-    name: 'AI Voice Clone — Rajesh Malhotra Wire Transfer Script',
-    description: "Synthesized AI voice clone speaking: 'Hello Sreya, this is Rajesh Malhotra, CFO of Apex Financial Corp. Authorize an urgent wire transfer...'",
-    type: 'file',
+    id: 'sample_wire_transfer',
+    name: 'Sample 1: Audio Recording (Wire Transfer Inquiry)',
+    description: 'Telephone conversation audio discussing urgent fund authorization and identity.',
     sampleUrl: '/samples/cfo_rajesh_urgent_wire.wav',
-    callerName: 'Rajesh Malhotra (CFO, Apex Financial Corp)',
-    claimedSpeakerId: 'LA_0069',
-    claimedOrgId: 'org_demo_001',
-    claimedOrgName: 'Apex Financial Corp',
-    badge: 'AI VOICE CLONE',
-    badgeColor: 'bg-red-500 text-white',
   },
   {
-    id: 'ai_clone_cfo',
-    name: 'AI Deepfake Benchmark (ASVspoof Sample)',
-    description: 'Acoustic neural TTS benchmark sample testing synthetic spectral artifacts and phase anomalies.',
-    type: 'file',
-    sampleUrl: '/samples/tts_cloned_ava.wav',
-    callerName: 'Rajesh Malhotra (CFO, Apex Financial Corp)',
-    claimedSpeakerId: 'LA_0069',
-    claimedOrgId: 'org_demo_001',
-    claimedOrgName: 'Apex Financial Corp',
-    badge: 'BENCHMARK SAMPLE',
-    badgeColor: 'bg-rose-600 text-white',
-  },
-  {
-    id: 'genuine_cfo',
-    name: 'Genuine Executive (Authorized Match)',
-    description: 'Authentic enrolled voice of CFO Rajesh Malhotra with matched biometric embeddings.',
-    type: 'file',
+    id: 'sample_exec_statement',
+    name: 'Sample 2: Audio Recording (Executive Statement)',
+    description: 'Spoken dialogue audio recording discussing quarterly operations.',
     sampleUrl: '/samples/real_speech_tts.wav',
-    callerName: 'Rajesh Malhotra (CFO, Apex Financial Corp)',
-    claimedSpeakerId: 'LA_0069',
-    claimedOrgId: 'org_demo_001',
-    claimedOrgName: 'Apex Financial Corp',
-    badge: 'GENUINE MATCH',
-    badgeColor: 'bg-emerald-600 text-white',
   },
   {
-    id: 'human_imposter',
-    name: 'Human Imposter (Voice Mismatch)',
-    description: 'Human social engineering attacker pretending to be Rajesh Malhotra.',
-    type: 'file',
+    id: 'sample_external_speech',
+    name: 'Sample 3: Audio Recording (External Caller Statement)',
+    description: 'Natural voice dialogue audio from external speaker.',
     sampleUrl: '/samples/speaker_b_test.wav',
-    callerName: 'Rajesh Malhotra (CFO, Apex Financial Corp)',
-    claimedSpeakerId: 'LA_0069',
-    claimedOrgId: 'org_demo_001',
-    claimedOrgName: 'Apex Financial Corp',
-    badge: 'SPEAKER MISMATCH',
-    badgeColor: 'bg-amber-500 text-white',
   },
   {
-    id: 'live_mic_attacker',
-    name: 'Live Microphone (Attacker Mic)',
-    description: 'Speak into laptop microphone in real time while claiming enrolled executive status.',
-    type: 'mic',
-    callerName: 'Rajesh Malhotra (CFO, Apex Financial Corp)',
-    claimedSpeakerId: 'LA_0069',
-    claimedOrgId: 'org_demo_001',
-    claimedOrgName: 'Apex Financial Corp',
-    badge: 'LIVE INJECTION',
-    badgeColor: 'bg-indigo-600 text-white',
+    id: 'sample_synthetic_benchmark',
+    name: 'Sample 4: Audio Recording (Acoustic Benchmark)',
+    description: 'Standard acoustic benchmark audio sample.',
+    sampleUrl: '/samples/tts_cloned_ava.wav',
   },
 ];
 
@@ -133,32 +83,28 @@ export default function AttackerPage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // Target Recipient state
+  // 1. Target Recipient
   const [recipients, setRecipients] = useState<BackendUserSummary[]>(SEEDED_FALLBACK_RECIPIENTS);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [selectedRecipientId, setSelectedRecipientId] = useState<string>('user_sreya_001');
 
-  // Scenario state
-  const [selectedScenarioId, setSelectedScenarioId] = useState<string>('ai_clone_cfo');
-  const [customCallerName, setCustomCallerName] = useState('Rajesh Malhotra (CFO, Apex Financial Corp)');
-  const [customClaimedSpeakerId, setCustomClaimedSpeakerId] = useState('LA_0069');
+  // 2. Audio Source Selection (Input source only — never determines classification)
+  const [audioSourceType, setAudioSourceType] = useState<'mic' | 'file'>('mic');
+  const [selectedSampleId, setSelectedSampleId] = useState<string>('sample_wire_transfer');
 
-  // Call lifecycle: 'idle' | 'ringing' | 'active' | 'ended' | 'error'
+  // 3. Call Lifecycle: 'idle' | 'ringing' | 'active' | 'ended' | 'error'
   const [callState, setCallState] = useState<'idle' | 'ringing' | 'active' | 'ended' | 'error'>('idle');
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [micActive, setMicActive] = useState(true);
   const [waveformActivity, setWaveformActivity] = useState(0.05);
 
-  // Authoritative Backend ML Telemetry
-  const [lastRiskScore, setLastRiskScore] = useState<number | null>(null);
-  const [lastRiskLevel, setLastRiskLevel] = useState<string>('SAFE');
-  const [lastVerdict, setLastVerdict] = useState<string>('inconclusive');
+  // Live Transmission Status Feedback
+  const [statusNote, setStatusNote] = useState('Ready to place call to recipient');
   const [lastTranscript, setLastTranscript] = useState<string>('');
-  const [statusNote, setStatusNote] = useState('Ready to launch simulated attack call');
 
   const streamRef = useRef<WebSocketLiveCallStreamImpl | null>(null);
 
-  // Fetch real users from backend
+  // Load real recipient users from backend
   const loadRecipients = useCallback(async () => {
     setLoadingUsers(true);
     try {
@@ -172,7 +118,6 @@ export default function AttackerPage() {
       if (res.ok) {
         const users: BackendUserSummary[] = await res.json();
         if (users && users.length > 0) {
-          // Filter out caller/attacker and prioritize citizen users
           const filtered = users.filter((u) => u.role !== 'CALLER' && u.username !== 'attacker');
           setRecipients(filtered.length > 0 ? filtered : users);
           setSelectedRecipientId((curr) => {
@@ -193,7 +138,7 @@ export default function AttackerPage() {
     loadRecipients();
   }, [loadRecipients]);
 
-  // Clean up on unmount without terminating server session inadvertently
+  // Clean up on unmount
   useEffect(() => {
     return () => {
       if (streamRef.current) {
@@ -203,7 +148,7 @@ export default function AttackerPage() {
     };
   }, []);
 
-  // Connect personal user WebSocket for attacker to receive direct notifications
+  // Connect personal user WebSocket to receive CALL_ACCEPTED event directly
   useEffect(() => {
     if (!user) return;
     userSocketService.connect(user.id);
@@ -228,7 +173,7 @@ export default function AttackerPage() {
     };
   }, [user, activeSessionId]);
 
-  // Polling fallback while ringing to guarantee state transition as soon as recipient accepts
+  // 1-second polling fallback while ringing to guarantee synchronization
   useEffect(() => {
     if (callState !== 'ringing' || !activeSessionId) return;
 
@@ -243,13 +188,13 @@ export default function AttackerPage() {
         if (res.ok) {
           const callData = await res.json();
           if (callData.status === 'ACTIVE') {
-            console.info('[AttackerPage] Poller detected call is ACTIVE — connecting stream');
+            console.info('[AttackerPage] Poller detected call is ACTIVE — starting audio transmission');
             setCallState('active');
-            setStatusNote('Call accepted by recipient! Audio streaming is now active.');
+            setStatusNote('Call accepted by recipient! Live audio transmission active.');
             if (streamRef.current) {
               streamRef.current.notifyCallAccepted(callData);
             }
-          } else if (callData.status === 'ENDED') {
+          } else if (callData.status === 'ENDED' || callData.status === 'TERMINATED') {
             setCallState('ended');
             setStatusNote('Call ended.');
           }
@@ -262,37 +207,27 @@ export default function AttackerPage() {
     return () => clearInterval(pollInterval);
   }, [callState, activeSessionId]);
 
-  const activeScenario = ATTACK_SCENARIOS.find((s) => s.id === selectedScenarioId) || ATTACK_SCENARIOS[0];
+  const activeAudioSample = TEST_AUDIO_SOURCES.find((s) => s.id === selectedSampleId) || TEST_AUDIO_SOURCES[0];
 
   const handleStartCall = async () => {
     if (callState === 'active' || callState === 'ringing') return;
 
+    const targetUser = recipients.find((r) => r.id === selectedRecipientId);
+    const targetName = targetUser ? targetUser.full_name : 'Recipient';
+
     setCallState('ringing');
-    setStatusNote('Calling Sreya... Waiting for recipient to accept on Laptop B');
-    setLastRiskScore(null);
-    setLastRiskLevel('SAFE');
-    setLastVerdict('inconclusive');
+    setStatusNote(`Calling ${targetName}... Waiting for recipient to accept`);
     setLastTranscript('');
 
     const stream = new WebSocketLiveCallStreamImpl();
     streamRef.current = stream;
 
-    // Listen to real backend events
     stream.subscribe((evt: CallEvent) => {
       if (evt.type === 'call_accepted') {
         setCallState('active');
-        setStatusNote('Call accepted by recipient! Audio streaming is now active.');
-      } else if (evt.type === 'call_started') {
-        // Connected to backend
+        setStatusNote('Call accepted by recipient! Live audio transmission active.');
       } else if (evt.type === 'security_update') {
         const payload = evt.payload;
-        if (payload.security) {
-          setLastRiskScore(payload.security.score);
-          setLastRiskLevel(payload.security.severity);
-          if (payload.security.action) {
-            setStatusNote(`Backend Policy Action: ${payload.security.action}`);
-          }
-        }
         if (payload.transcript && payload.transcript.length > 0) {
           const latest = payload.transcript[payload.transcript.length - 1];
           if (latest) {
@@ -310,33 +245,36 @@ export default function AttackerPage() {
     });
 
     try {
+      // NOTE: Attacker specifies ONLY real recipient and audio input.
+      // Zero claimed identity, zero speaker ID, zero scenario classification.
       await stream.start({
         callId: `call-${Date.now()}`,
         recipientUserId: selectedRecipientId,
-        callerName: customCallerName.trim() || activeScenario.callerName,
-        claimedSpeakerId: customClaimedSpeakerId.trim() || undefined,
-        claimedOrgId: activeScenario.claimedOrgId,
-        claimedOrgName: activeScenario.claimedOrgName,
-        testAudioUrl: activeScenario.type === 'file' ? activeScenario.sampleUrl : undefined,
-        waitForAcceptance: true, // Only stream audio once recipient clicks Accept
+        callerName: 'Incoming Call',
+        claimedSpeakerId: undefined,
+        claimedOrgId: undefined,
+        claimedOrgName: undefined,
+        testAudioUrl: audioSourceType === 'file' ? activeAudioSample.sampleUrl : undefined,
+        waitForAcceptance: true,
       });
 
-      setActiveSessionId(stream.getSessionId());
+      const assignedSession = stream.getSessionId();
+      setActiveSessionId(assignedSession);
+      console.info(`[AttackerPage] Call placed successfully. Session: ${assignedSession}`);
     } catch (err: any) {
-      console.error('[AttackerPage] Call failed:', err);
+      console.error('[AttackerPage] Call initialization failed:', err);
       setCallState('error');
-      setStatusNote(`Error: ${err.message || err}`);
+      setStatusNote(`Call connection failed: ${err?.message || 'Server error'}`);
     }
   };
 
   const handleEndCall = () => {
     if (streamRef.current) {
-      streamRef.current.terminate('CALLER_HANGUP');
+      streamRef.current.terminate('NORMAL_HANGUP');
       streamRef.current = null;
     }
     setCallState('ended');
-    setWaveformActivity(0.05);
-    setStatusNote('Call terminated by Caller.');
+    setStatusNote('Call ended.');
   };
 
   const handleToggleMic = () => {
@@ -347,364 +285,322 @@ export default function AttackerPage() {
     }
   };
 
-  const handleSignOut = async () => {
-    if (callState === 'active' || callState === 'ringing') {
-      handleEndCall();
-    }
-    await authService.logout();
-    logout();
-    navigate('/login');
-  };
-
-  const selectedRecipient = recipients.find((r) => r.id === selectedRecipientId);
+  const selectedTarget = recipients.find((r) => r.id === selectedRecipientId);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Top Navbar */}
-      <header className="bg-slate-900 border-b border-slate-800 px-6 py-3.5 flex items-center justify-between shadow-md">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+      {/* ── Top Bar ── */}
+      <header className="border-b border-slate-800 bg-slate-900/90 px-6 py-4 flex items-center justify-between sticky top-0 z-30 backdrop-blur">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-red-600/90 rounded-lg flex items-center justify-center border border-red-400/30">
-            <Zap className="text-white" size={20} />
+          <div className="w-9 h-9 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center">
+            <Radio size={18} className="text-blue-400 animate-pulse" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-bold text-white text-base tracking-wide">VoiceShield Caller Console</span>
-              <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-red-950/80 text-red-400 border border-red-800/60 font-semibold">
-                Attack Terminal
+              <h1 className="text-base font-bold text-slate-100">VoiceShield Attacker & Inbound Caller Console</h1>
+              <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                Laptop A (Caller Side)
               </span>
             </div>
-            <p className="text-xs text-slate-400">Caller Simulation & Voice Clone Injection Platform</p>
+            <p className="text-xs text-slate-400">
+              Live telephone call generator targeting independent recipient
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <div className="text-right hidden sm:block">
-            <div className="text-xs font-semibold text-slate-300">{user?.name || 'Attacker Simulator'}</div>
-            <div className="text-[11px] font-mono text-red-400">role: CALLER (Laptop A)</div>
+            <div className="text-xs font-semibold text-slate-200">{user?.name || 'Attacker / External Caller'}</div>
+            <div className="text-[11px] text-slate-400">{user?.email || 'attacker@demo.com'}</div>
           </div>
           <button
-            onClick={handleSignOut}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-red-900/60 hover:text-red-200 border border-slate-700 transition"
+            onClick={() => {
+              logout();
+              navigate('/login');
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition"
           >
-            <LogOut size={14} />
-            <span>Sign Out</span>
+            <LogOut size={13} />
+            Sign Out
           </button>
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-6xl w-full mx-auto p-4 md:p-6 space-y-6">
-        {/* Info Banner */}
-        <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs text-slate-300">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 flex-shrink-0">
-              <AlertTriangle size={18} />
-            </div>
+      {/* ── Main Content Grid ── */}
+      <main className="flex-1 max-w-5xl w-full mx-auto p-6 space-y-6">
+        {/* 1. Target Recipient & Call Control */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-4">
             <div>
-              <p className="font-medium text-slate-200">
-                Two-Laptop Demonstration Mode: <strong>Laptop A (Caller / Attacker)</strong>
-              </p>
-              <p className="text-slate-400 text-[11px] mt-0.5">
-                Place an outbound call to Sreya on Laptop B. Sreya will receive an incoming call prompt. Once accepted, audio streams live to the Member 1 AI pipeline.
+              <span className="text-[11px] font-bold text-blue-400 uppercase tracking-wider">Step 1</span>
+              <h2 className="text-lg font-bold text-slate-100 mt-0.5">Target Recipient</h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Select the genuine citizen or user to place the incoming telephone call to.
               </p>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
             <button
               onClick={loadRecipients}
-              disabled={loadingUsers}
-              className="px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 flex items-center gap-1 text-[11px]"
-              title="Refresh Recipients"
+              disabled={loadingUsers || callState === 'active' || callState === 'ringing'}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition disabled:opacity-40"
+              title="Refresh recipients"
             >
-              <RefreshCw size={12} className={loadingUsers ? 'animate-spin' : ''} />
-              <span>Refresh Users</span>
+              <RefreshCw size={14} className={loadingUsers ? 'animate-spin' : ''} />
             </button>
           </div>
-        </div>
 
-        {/* Configuration Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column: Target & Impersonation Claim */}
-          <div className="lg:col-span-6 space-y-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                  1. Target Recipient (Citizen Under Protection)
-                </span>
-                <span className="text-[11px] text-slate-500">Laptop B User</span>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Select Protected Recipient
-                </label>
-                <select
-                  value={selectedRecipientId}
-                  onChange={(e) => setSelectedRecipientId(e.target.value)}
-                  disabled={callState === 'active' || callState === 'ringing'}
-                  className="w-full text-sm bg-slate-950 border border-slate-700 rounded-lg p-2.5 font-medium text-slate-100 focus:ring-2 focus:ring-red-500 focus:outline-none"
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {recipients.map((recip) => {
+              const isSelected = selectedRecipientId === recip.id;
+              const isLocked = callState === 'active' || callState === 'ringing';
+              return (
+                <button
+                  key={recip.id}
+                  disabled={isLocked}
+                  onClick={() => setSelectedRecipientId(recip.id)}
+                  className={`p-4 rounded-xl border text-left transition-all relative ${
+                    isSelected
+                      ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/50'
+                      : 'border-slate-800 bg-slate-800/40 hover:bg-slate-800/80 hover:border-slate-700'
+                  } ${isLocked ? 'cursor-not-allowed opacity-60' : ''}`}
                 >
-                  {recipients.map((rec) => (
-                    <option key={rec.id} value={rec.id}>
-                      {rec.full_name} ({rec.username}) {rec.id === 'user_sreya_001' ? '★ Target Citizen' : ''}
-                    </option>
-                  ))}
-                </select>
-                {selectedRecipient && (
-                  <div className="mt-2 text-xs text-slate-400 flex items-center gap-1.5">
-                    <UserCheck size={14} className="text-emerald-400" />
-                    <span>
-                      Ringing will target <strong>{selectedRecipient.full_name}</strong> ({selectedRecipient.email})
-                    </span>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="text-sm font-bold text-slate-100">{recip.full_name}</div>
+                      <div className="text-xs text-slate-400 font-mono mt-0.5">{recip.email}</div>
+                    </div>
+                    {isSelected && (
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                        Target
+                      </span>
+                    )}
                   </div>
+                  <div className="mt-2 text-[11px] text-slate-400 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    Role: <span className="text-slate-300 font-semibold">{recip.role}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Call Status & Action Banner */}
+          <div className="bg-slate-950/80 border border-slate-800/90 rounded-xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="space-y-1 w-full sm:w-auto text-center sm:text-left">
+              <div className="flex items-center justify-center sm:justify-start gap-2">
+                <span className="text-xs text-slate-400 font-semibold uppercase">Call Status:</span>
+                {callState === 'idle' && (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                    READY TO CALL
+                  </span>
+                )}
+                {callState === 'ringing' && (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                    RINGING RECIPIENT
+                  </span>
+                )}
+                {callState === 'active' && (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    CONNECTED (LIVE TRANSMISSION)
+                  </span>
+                )}
+                {callState === 'ended' && (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                    CALL ENDED
+                  </span>
+                )}
+                {callState === 'error' && (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-500/20 text-red-300 border border-red-500/40">
+                    CONNECTION ERROR
+                  </span>
                 )}
               </div>
+              <p className="text-xs text-slate-400">{statusNote}</p>
             </div>
 
-            {/* Impersonated Identity */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                  2. Impersonated Identity Claim
-                </span>
-                <span className="text-[11px] font-mono text-red-400 font-semibold">TARGET CLAIM</span>
-              </div>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Caller Display Name
-                  </label>
-                  <input
-                    type="text"
-                    value={customCallerName}
-                    onChange={(e) => setCustomCallerName(e.target.value)}
-                    disabled={callState === 'active' || callState === 'ringing'}
-                    className="w-full text-sm bg-slate-950 border border-slate-700 rounded-lg p-2.5 font-medium text-slate-100 focus:ring-2 focus:ring-red-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Claimed Enrolled Speaker ID
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={customClaimedSpeakerId}
-                      onChange={(e) => setCustomClaimedSpeakerId(e.target.value)}
-                      disabled={callState === 'active' || callState === 'ringing'}
-                      className="flex-1 text-sm bg-slate-950 border border-slate-700 rounded-lg p-2.5 font-mono text-slate-100 focus:ring-2 focus:ring-red-500 focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setCustomClaimedSpeakerId(customClaimedSpeakerId ? '' : 'LA_0069')}
-                      disabled={callState === 'active' || callState === 'ringing'}
-                      className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 font-medium"
-                    >
-                      {customClaimedSpeakerId ? 'Clear' : 'LA_0069 (Rajesh)'}
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    {customClaimedSpeakerId
-                      ? 'Claims enrolled profile LA_0069 (Rajesh Malhotra, CFO, Apex Financial Corp). Any spoof triggers Apex SOC alert.'
-                      : 'Unclaimed caller: Analyzed purely for general synthetic/deepfake artifacts.'}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column: Scenario Selection */}
-          <div className="lg:col-span-6 space-y-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                  3. Select Attack / Verification Scenario
-                </span>
-                <span className="text-[11px] text-slate-500">Audio Payload</span>
-              </div>
-
-              <div className="space-y-2.5">
-                {ATTACK_SCENARIOS.map((scen) => {
-                  const isSelected = scen.id === selectedScenarioId;
-                  return (
-                    <div
-                      key={scen.id}
-                      onClick={() => {
-                        if (callState !== 'active' && callState !== 'ringing') {
-                          setSelectedScenarioId(scen.id);
-                          setCustomCallerName(scen.callerName);
-                          setCustomClaimedSpeakerId(scen.claimedSpeakerId);
-                        }
-                      }}
-                      className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                        isSelected
-                          ? 'bg-slate-850 border-red-500/80 shadow-md ring-1 ring-red-500/40'
-                          : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-900'
-                      } ${callState === 'active' || callState === 'ringing' ? 'opacity-60 cursor-not-allowed' : ''}`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          {scen.type === 'file' ? (
-                            <FileAudio size={15} className={isSelected ? 'text-red-400' : 'text-slate-400'} />
-                          ) : (
-                            <Mic size={15} className={isSelected ? 'text-indigo-400' : 'text-slate-400'} />
-                          )}
-                          <span className="font-semibold text-sm text-slate-200">{scen.name}</span>
-                        </div>
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${scen.badgeColor}`}>
-                          {scen.badge}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 pl-6">{scen.description}</p>
-                      {scen.sampleUrl && (
-                        <div className="mt-1.5 pl-6 text-[10px] font-mono text-slate-500 truncate">
-                          Source: {scen.sampleUrl}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Transmission & Call Control Box */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <span className="text-lg font-bold text-white">Call Dispatch & Transmission</span>
-                <span
-                  className={`text-xs px-2.5 py-0.5 rounded-full font-bold uppercase ${
-                    callState === 'active'
-                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
-                      : callState === 'ringing'
-                      ? 'bg-amber-950 text-amber-300 border border-amber-700 animate-pulse'
-                      : 'bg-slate-800 text-slate-400'
-                  }`}
-                >
-                  {callState === 'ringing' ? 'RINGING (WAITING FOR SREYA)' : callState.toUpperCase()}
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-1">
-                Target: <strong className="text-slate-200">{selectedRecipient?.full_name || 'None'}</strong> • Mode:{' '}
-                <span className="text-slate-300">{activeScenario.name}</span>
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {callState === 'active' && activeScenario.type === 'mic' && (
+            <div className="flex items-center gap-3 w-full sm:w-auto justify-center">
+              {callState === 'idle' || callState === 'ended' || callState === 'error' ? (
                 <button
-                  type="button"
-                  onClick={handleToggleMic}
-                  className={`px-3 py-2 text-xs font-semibold rounded-lg border flex items-center gap-1.5 transition ${
-                    micActive
-                      ? 'bg-slate-850 border-slate-700 text-slate-200 hover:bg-slate-800'
-                      : 'bg-amber-900/60 border-amber-700 text-amber-200'
-                  }`}
+                  onClick={handleStartCall}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-lg shadow-emerald-600/30 transition active:scale-95"
                 >
-                  {micActive ? <MicOff size={14} /> : <Mic size={14} />}
-                  <span>{micActive ? 'Mute Mic' : 'Unmute Mic'}</span>
+                  <PhoneOutgoing size={17} />
+                  Call {selectedTarget?.full_name?.split(' ')[0] || 'Recipient'}
                 </button>
-              )}
-
-              {callState === 'active' || callState === 'ringing' ? (
+              ) : callState === 'ringing' ? (
                 <button
-                  type="button"
                   onClick={handleEndCall}
-                  className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-bold flex items-center gap-2 shadow-lg shadow-red-950/50 transition"
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-red-300 border border-red-500/40 font-semibold text-sm transition"
                 >
                   <PhoneOff size={16} />
-                  <span>END CALL</span>
+                  Cancel Call
                 </button>
               ) : (
                 <button
-                  type="button"
-                  onClick={handleStartCall}
-                  disabled={!selectedRecipientId}
-                  className="px-6 py-2.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 text-white rounded-lg text-sm font-bold flex items-center gap-2 shadow-lg shadow-red-950/40 transition"
+                  onClick={handleEndCall}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-sm shadow-lg shadow-red-600/30 transition active:scale-95"
                 >
-                  <PhoneOutgoing size={16} />
-                  <span>START CALL (LAUNCH INJECTION)</span>
+                  <PhoneOff size={17} />
+                  End Live Call
                 </button>
               )}
             </div>
           </div>
+        </div>
 
-          {/* Status Note Banner */}
-          <div
-            className={`p-3 rounded-lg border flex items-center gap-2.5 text-xs font-medium ${
-              callState === 'ringing'
-                ? 'bg-amber-950/50 border-amber-800/80 text-amber-200'
-                : callState === 'active'
-                ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-200'
-                : 'bg-slate-950 border-slate-800 text-slate-400'
-            }`}
-          >
-            <Activity size={15} className={callState === 'active' || callState === 'ringing' ? 'animate-spin' : ''} />
-            <span>{statusNote}</span>
+        {/* 2. Audio Transmission Source */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+          <div className="border-b border-slate-800 pb-3">
+            <span className="text-[11px] font-bold text-blue-400 uppercase tracking-wider">Step 2</span>
+            <h2 className="text-lg font-bold text-slate-100 mt-0.5">Audio Transmission Source</h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Choose the acoustic audio input source streamed to the recipient and analyzed live by VoiceShield.
+            </p>
           </div>
 
-          {/* Waveform Visualizer */}
-          <div className="bg-slate-950 border border-slate-800/80 rounded-xl p-4 text-white">
-            <div className="flex justify-between items-center mb-2 text-xs text-slate-400">
-              <span className="flex items-center gap-2">
-                <Radio size={14} className={callState === 'active' ? 'text-red-400 animate-pulse' : ''} />
-                Stream Channel: 16 kHz Mono PCM
-              </span>
-              <span className="font-mono text-[11px] text-slate-400">
-                {activeScenario.type === 'file' ? activeScenario.sampleUrl : 'Browser Microphone'}
-              </span>
-            </div>
-            <LiveVoiceWaveform
-              activityLevel={waveformActivity}
-              state={waveformActivity > 0.1 ? 'speaking' : 'silence'}
-              severity={lastRiskLevel as any}
-            />
+          {/* Mode Switch Tabs */}
+          <div className="flex rounded-xl bg-slate-800/80 p-1 border border-slate-700 max-w-md">
+            <button
+              onClick={() => setAudioSourceType('mic')}
+              disabled={callState === 'active' || callState === 'ringing'}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg text-xs font-bold transition ${
+                audioSourceType === 'mic'
+                  ? 'bg-blue-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              } ${callState === 'active' || callState === 'ringing' ? 'cursor-not-allowed opacity-60' : ''}`}
+            >
+              <Mic size={14} />
+              Live Microphone
+            </button>
+            <button
+              onClick={() => setAudioSourceType('file')}
+              disabled={callState === 'active' || callState === 'ringing'}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg text-xs font-bold transition ${
+                audioSourceType === 'file'
+                  ? 'bg-blue-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              } ${callState === 'active' || callState === 'ringing' ? 'cursor-not-allowed opacity-60' : ''}`}
+            >
+              <FileAudio size={14} />
+              Test Audio Sample
+            </button>
           </div>
 
-          {/* Real Backend AI Telemetry Feedback */}
-          {callState === 'active' && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-slate-950 border border-slate-800 rounded-xl text-center">
-              <div>
-                <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-1">Backend Risk Score</div>
-                <div className="text-2xl font-bold text-white font-mono">
-                  {lastRiskScore !== null ? `${Math.round(lastRiskScore)}/100` : '—'}
+          {audioSourceType === 'mic' ? (
+            <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                  <Mic size={18} />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-slate-200">Laptop Microphone (16 kHz Mono PCM)</div>
+                  <div className="text-xs text-slate-400">
+                    Live speech is captured and streamed over WebSocket.
+                  </div>
                 </div>
               </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-1">Threat Level</div>
-                <div className="mt-1 flex justify-center">
-                  <SeverityBadge level={lastRiskLevel as any} size="sm" />
-                </div>
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-1">AI Verdict</div>
-                <div className="text-sm font-bold text-slate-200 capitalize">
-                  {lastVerdict || 'Analyzing…'}
-                </div>
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-1">Active Session</div>
-                <div className="text-xs font-mono text-slate-400 truncate" title={activeSessionId || ''}>
-                  {activeSessionId ? activeSessionId.slice(0, 12) + '…' : '—'}
-                </div>
-              </div>
-            </div>
-          )}
 
-          {/* Real-time Whisper ASR Recognized Speech */}
-          {lastTranscript && (
-            <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">
-                Whisper ASR Speech Recognized:
-              </span>
-              <p className="text-sm text-slate-200 italic">&ldquo;{lastTranscript}&rdquo;</p>
+              {callState === 'active' && (
+                <button
+                  onClick={handleToggleMic}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                    micActive
+                      ? 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+                      : 'bg-red-500/20 text-red-300 border-red-500/30'
+                  }`}
+                >
+                  {micActive ? <MicOff size={13} /> : <Mic size={13} />}
+                  {micActive ? 'Mute' : 'Unmute'}
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {TEST_AUDIO_SOURCES.map((sample) => {
+                  const isSelected = selectedSampleId === sample.id;
+                  const isLocked = callState === 'active' || callState === 'ringing';
+                  return (
+                    <button
+                      key={sample.id}
+                      disabled={isLocked}
+                      onClick={() => setSelectedSampleId(sample.id)}
+                      className={`p-3.5 rounded-xl border text-left transition-all ${
+                        isSelected
+                          ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/40'
+                          : 'border-slate-800 bg-slate-800/30 hover:bg-slate-800/70 hover:border-slate-700'
+                      } ${isLocked ? 'cursor-not-allowed opacity-60' : ''}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-200">{sample.name}</span>
+                        <Volume2 size={13} className={isSelected ? 'text-blue-400' : 'text-slate-500'} />
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1 leading-snug">{sample.description}</p>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-slate-400 italic pt-1">
+                Audio sample provides raw audio frames. The backend AI models determine voice authenticity and conversational intent solely from the acoustic stream and dialogue.
+              </p>
             </div>
           )}
+        </div>
+
+        {/* 3. Live Transmission Telemetry Monitor */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <Activity size={16} className="text-blue-400 animate-pulse" />
+              <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wide">
+                Live Transmission Telemetry
+              </h3>
+            </div>
+            <span className="text-xs text-slate-400 font-mono">
+              {callState === 'active' ? 'STREAMING ACTIVE' : 'TRANSMISSION IDLE'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Audio Waveform */}
+            <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4">
+              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2 flex items-center justify-between">
+                <span>Audio Waveform Activity</span>
+                <span className="text-blue-400 font-mono text-[11px]">
+                  {callState === 'active' ? (micActive ? 'TRANSMITTING' : 'MUTED') : 'STANDBY'}
+                </span>
+              </div>
+              <LiveVoiceWaveform
+                activityLevel={waveformActivity}
+                state={callState === 'active' && micActive ? 'speaking' : 'silence'}
+                height={64}
+                barCount={32}
+              />
+            </div>
+
+            {/* Recognized Dialogue Preview */}
+            <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+              <div>
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">
+                  Recognized Speech Stream
+                </div>
+                <div className="text-xs text-slate-300 font-mono min-h-[48px] bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/80">
+                  {lastTranscript || (
+                    <span className="text-slate-400 italic">
+                      {callState === 'active'
+                        ? 'Listening for speech in audio transmission...'
+                        : 'Audio dialogue will display here during active call.'}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-2 flex items-center justify-between">
+                <span>Session ID:</span>
+                <span className="font-mono text-slate-300">{activeSessionId || 'None'}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </main>
     </div>

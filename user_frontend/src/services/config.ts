@@ -53,3 +53,4 @@ export const config = {
   /** When true, uses built-in mock stream instead of real WebSocket backend */
   useMockStream: import.meta.env.VITE_USE_MOCK_STREAM === 'true',
 } as const;
+

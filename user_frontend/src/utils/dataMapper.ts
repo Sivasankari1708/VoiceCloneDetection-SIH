@@ -53,9 +53,14 @@ export function mapIdentityStatus(value: string | number): IdentityStatus {
     return 'failed';
   }
   switch (value?.toUpperCase()) {
+    case 'VERIFIED':
     case 'MATCHED': return 'verified';
+    case 'IDENTITY_MISMATCH':
     case 'MISMATCHED': return 'failed';
+    case 'UNVERIFIED': return 'unverified';
+    case 'NOT_AVAILABLE':
     case 'UNENROLLED': return 'unavailable';
+    case 'VERIFICATION_DEGRADED':
     case 'INCONCLUSIVE': return 'checking';
     default: return 'checking';
   }

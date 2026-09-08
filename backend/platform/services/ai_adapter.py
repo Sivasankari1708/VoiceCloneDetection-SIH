@@ -156,6 +156,9 @@ class AIAdapter:
                 if sr != 16000:
                     import librosa
                     wav_arr = librosa.resample(wav_arr, orig_sr=sr, target_sr=16000)
+                peak = float(np.max(np.abs(wav_arr))) if len(wav_arr) > 0 else 0.0
+                if 0.005 < peak < 0.40:
+                    wav_arr = wav_arr * (0.85 / (peak + 1e-8))
                 return np.clip(wav_arr, -1.0, 1.0)
             except Exception:
                 pass
@@ -165,6 +168,9 @@ class AIAdapter:
                 try:
                     int16_arr = np.frombuffer(raw_data, dtype=np.int16)
                     float_arr = int16_arr.astype(np.float32) / 32768.0
+                    peak = float(np.max(np.abs(float_arr))) if len(float_arr) > 0 else 0.0
+                    if 0.005 < peak < 0.40:
+                        float_arr = float_arr * (0.85 / (peak + 1e-8))
                     return np.clip(float_arr, -1.0, 1.0)
                 except Exception:
                     pass
@@ -176,6 +182,9 @@ class AIAdapter:
                 tmp_path = Path(tmp.name)
             try:
                 wav_np, _ = self.streaming_pipeline._decode_chunk(tmp_path)
+                peak = float(np.max(np.abs(wav_np))) if len(wav_np) > 0 else 0.0
+                if 0.005 < peak < 0.40:
+                    wav_np = wav_np * (0.85 / (peak + 1e-8))
                 return wav_np
             finally:
                 tmp_path.unlink(missing_ok=True)
@@ -184,6 +193,9 @@ class AIAdapter:
             arr = raw_data.astype(np.float32)
             if arr.ndim > 1:
                 arr = arr.mean(axis=0)
+            peak = float(np.max(np.abs(arr))) if len(arr) > 0 else 0.0
+            if 0.005 < peak < 0.40:
+                arr = arr * (0.85 / (peak + 1e-8))
             return np.clip(arr, -1.0, 1.0)
 
         raise TypeError(f"Unsupported audio input type: {type(raw_data)}")

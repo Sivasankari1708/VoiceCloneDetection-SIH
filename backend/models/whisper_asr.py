@@ -265,6 +265,7 @@ class WhisperASR:
         vad_filter: bool = True,
         language: Optional[str] = None,
         task: str = "transcribe",
+        initial_prompt: Optional[str] = None,
     ) -> ASRResult:
         """
         Transcribe audio waveform to text.
@@ -281,6 +282,8 @@ class WhisperASR:
             Optional language code (e.g. 'en'). If None, auto-detected.
         task : str
             'transcribe' or 'translate'.
+        initial_prompt : str | None
+            Optional conditioning prompt. Defaults to None to prevent bias.
 
         Returns
         -------
@@ -329,8 +332,11 @@ class WhisperASR:
             )
 
         # 2. Silence / VAD gating check
-        # Check if waveform is pure digital silence (all zeros)
-        if np.all(waveform == 0.0) or np.max(np.abs(waveform)) < 1e-5:
+        peak_amp = float(np.max(np.abs(waveform)))
+        rms_amp = float(np.sqrt(np.mean(waveform ** 2)))
+
+        # Digital silence or near-zero noise floor
+        if np.all(waveform == 0.0) or peak_amp < 1e-4 or rms_amp < 1e-4:
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
             log.debug("Audio is digital silence; skipping Whisper inference (time=%.1fms)", elapsed_ms)
             return ASRResult(
@@ -343,7 +349,8 @@ class WhisperASR:
                 device=self.device,
             )
 
-        if vad_filter:
+        # Gate on VAD if requested or if signal is near ambient noise floor
+        if vad_filter or rms_amp < 0.005:
             vad = self._get_vad()
             vad_res: VADResult = vad.detect(waveform)
             if not vad_res.speech_detected or vad_res.speech_ratio <= 0.0:
@@ -364,6 +371,11 @@ class WhisperASR:
                     device=self.device,
                 )
 
+        # Normalize low-gain microphone speech to standard acoustic level
+        if 0.005 < peak_amp < 0.40:
+            scale = 0.85 / (peak_amp + 1e-8)
+            waveform = np.clip(waveform * scale, -1.0, 1.0)
+
         # 3. Whisper inference
         effective_language = language if language is not None else getattr(self, "default_language", "en")
         segments_gen, info = self._model.transcribe(
@@ -373,12 +385,12 @@ class WhisperASR:
             language=effective_language,
             task=task,
             condition_on_previous_text=False,
-            no_speech_threshold=0.6,
+            no_speech_threshold=0.45,
             log_prob_threshold=-1.0,
             compression_ratio_threshold=2.4,
             hallucination_silence_threshold=2.0,
-            vad_filter=True,
-            initial_prompt="OTP, verification code, KYC, bank account, transfer, security, password." if effective_language == "en" else None,
+            vad_filter=False,  # External Silero VAD gating already applied; avoids clipping human speech
+            initial_prompt=initial_prompt,
         )
 
         segment_list: List[Dict[str, Any]] = []
@@ -405,7 +417,7 @@ class WhisperASR:
             float(np.mean(no_speech_probs)) if no_speech_probs else (1.0 if not full_transcript else 0.0)
         )
 
-        # Silence artifact & common YouTube/social hallucination suppression
+        # Silence artifact & common YouTube/social hallucination suppression blacklist
         HALLUCINATION_SUBSTRINGS = (
             "watching this video",
             "next video",
@@ -425,17 +437,46 @@ class WhisperASR:
             "this is so weird",
             "i have recently sent a year off",
             "i've been involved with her",
+            "amara.org",
+            "captioned by",
+            "captions by",
+            "transcript by",
+            "translated by",
+            "all rights reserved",
+            "subscribe to",
+            "don't forget to like",
+            "hit the bell",
+            "notification bell",
+            "leave a comment",
+            "leave your comments",
+            "in the description below",
+            "check out my",
+            "check out our",
+            "link in the description",
+            "music",
+            "applause",
+            "cheering",
+            "laughter",
+            "silence",
         )
+
+        # High no-speech probability check: Whisper outputting tokens during silence
+        if avg_no_speech_prob >= 0.45:
+            log.info("Discarded text during silence (avg_no_speech_prob=%.2f): '%s'", avg_no_speech_prob, full_transcript)
+            full_transcript = ""
+            segment_list = []
+
         clean_lower = full_transcript.lower().strip()
         is_hallucination = any(pat in clean_lower for pat in HALLUCINATION_SUBSTRINGS)
-        is_short_courtesy = clean_lower in {
-            "thank you.", "thank you very much.", "thanks for watching.", "thanks for watching!",
-            "see you in the next video.", "subtitles by", "bye-bye.", "bye!",
-            "thank you", "thanks.", "watching", "see you next time.", "now you know.",
-            "now you know", "i noticed.", "i noticed",
-        }
-        if is_hallucination or (is_short_courtesy and (avg_no_speech_prob > 0.25 or len(waveform) <= 16000)):
-            log.info("Suppressed Whisper hallucination: '%s'", full_transcript)
+        is_short_artifact = clean_lower in {
+            "you", "you.", "thank you.", "thank you", "thanks.", "thanks",
+            "bye.", "bye", "bye-bye.", "bye-bye", "now you know.", "now you know",
+            "...", ".", "..", "watching", "so", "so.", "oh", "oh.", "okay", "okay.",
+            "[music]", "(music)", "[applause]", "(applause)", "[laughter]", "(laughter)",
+        } and (avg_no_speech_prob > 0.30 or rms_amp < 0.01)
+
+        if is_hallucination or is_short_artifact:
+            log.info("Suppressed Whisper silence hallucination: '%s'", full_transcript)
             full_transcript = ""
             segment_list = []
 

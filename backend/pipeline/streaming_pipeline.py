@@ -401,7 +401,15 @@ class StreamingSession:
                     if cur_str and cur_str in ex_str:
                         new_chunk = ""
                     else:
-                        new_chunk = cur_raw
+                        # 3. Fuzzy overlap: check if current window words are almost entirely (>= 75%)
+                        # within the trailing words of the existing transcript to avoid duplicate re-emits
+                        tail_set = set(tail_ex)
+                        matching_count = sum(1 for w in cur_words if w in tail_set)
+                        overlap_ratio = matching_count / max(len(cur_words), 1)
+                        if overlap_ratio >= 0.75 and len(cur_words) <= len(tail_ex) + 1:
+                            new_chunk = ""
+                        else:
+                            new_chunk = cur_raw
 
             if new_chunk:
                 self.accumulated_transcript_segments.append(new_chunk)

@@ -19,18 +19,38 @@ log = logging.getLogger(__name__)
 
 Base = declarative_base()
 
-# Connection arguments
-connect_args = {}
-if platform_config.database_url.startswith("sqlite"):
-    connect_args["check_same_thread"] = False
+def _create_engine():
+    db_url = platform_config.database_url
+    connect_args = {}
+    if db_url.startswith("sqlite"):
+        connect_args["check_same_thread"] = False
 
-engine = create_engine(
-    platform_config.database_url,
-    connect_args=connect_args,
-    echo=platform_config.db_echo,
-    pool_pre_ping=True,
-)
+    try:
+        eng = create_engine(
+            db_url,
+            connect_args=connect_args,
+            echo=platform_config.db_echo,
+            pool_pre_ping=True,
+        )
+        # Verify connection
+        with eng.connect():
+            pass
+        return eng
+    except Exception as exc:
+        log.warning(
+            "Primary database '%s' unavailable (%s); falling back to local SQLite.",
+            db_url,
+            exc,
+        )
+        fallback_url = "sqlite:///voice_clone_detection.db"
+        return create_engine(
+            fallback_url,
+            connect_args={"check_same_thread": False},
+            echo=platform_config.db_echo,
+            pool_pre_ping=True,
+        )
 
+engine = _create_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

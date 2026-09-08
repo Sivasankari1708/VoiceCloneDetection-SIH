@@ -68,10 +68,13 @@ async def start_call(
             target_recipient_id = recipient.id
         else:
             target_recipient_id = req.recipient_user_id
-    elif user and user.role == "USER":
+    elif user and user.role == "USER" and not req.caller_name:
         target_recipient_id = user.id
 
     caller_user_id = user.id if user else None
+    if caller_user_id and target_recipient_id == caller_user_id:
+        target_recipient_id = None
+
     caller_display_name = req.caller_name or "Incoming Call"
 
     orchestrator = SecurityOrchestrator(db=db)

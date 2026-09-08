@@ -515,6 +515,14 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   // ── Real Chrome Microphone Capture, WebAudio Graph & Resampling ──
   private async startMicrophone(): Promise<void> {
     try {
+      if (this.mediaStream && this.audioContext && this.processor) {
+        if (this.audioContext.state === 'suspended') {
+          await this.audioContext.resume();
+        }
+        this.diagnostics.micStatus = 'connected';
+        return;
+      }
+
       if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         console.warn('[VOICE] navigator.mediaDevices.getUserMedia is unavailable on this browser/origin.');
         this.diagnostics.micStatus = 'denied';
@@ -544,17 +552,22 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
 
       const source = ctx.createMediaStreamSource(stream);
 
+      // Natural 1:1 gain allowing browser echoCancellation and noiseSuppression to operate cleanly
+      const gainNode = ctx.createGain();
+      gainNode.gain.value = 1.0;
+      source.connect(gainNode);
+
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 512;
       analyser.smoothingTimeConstant = 0.2;
       this.analyser = analyser;
-      source.connect(analyser);
+      gainNode.connect(analyser);
 
       // eslint-disable-next-line @typescript-eslint/no-deprecated
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       this.processor = processor;
 
-      source.connect(processor);
+      gainNode.connect(processor);
       processor.connect(ctx.destination);
 
       (window as unknown as { _voiceShieldProcessor: ScriptProcessorNode; _voiceShieldCtx: AudioContext })._voiceShieldProcessor = processor;
@@ -671,6 +684,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   private stopMicrophone(): void {
     if (this.processor) {
       this.processor.disconnect();
+      this.processor.onaudioprocess = null;
       this.processor = null;
     }
     if (this.analyser) {

@@ -54,11 +54,13 @@ from backend.audio.preprocessing import (
 )
 from backend.audio.vad import SileroVAD, VADResult
 from backend.intent.intent_detector import IntentDetector, IntentResult
+from backend.models.asr_base import ASRResult, BaseASR
+from backend.models.asr_factory import create_asr_provider
 from backend.models.deepfake_v2 import DeepfakeV2Detector, DeepfakeV2Result
 from backend.models.speaker_enrollment import SpeakerEnrollmentService
 from backend.models.speaker_repository import BaseSpeakerRepository
 from backend.models.speaker_verifier import SpeakerResult, SpeakerVerifier
-from backend.models.whisper_asr import ASRResult, WhisperASR
+from backend.models.whisper_asr import WhisperASR
 from backend.schemas.inference_result import (
     AudioMeta,
     DeepfakeResult,
@@ -84,6 +86,7 @@ class InferencePipeline:
         deepfake_detector: Optional[DeepfakeV2Detector] = None,
         speaker_verifier: Optional[SpeakerVerifier] = None,
         whisper_asr: Optional[WhisperASR] = None,
+        asr_provider: Optional[BaseASR] = None,
         intent_detector: Optional[IntentDetector] = None,
         vad: Optional[SileroVAD] = None,
         deepfake_checkpoint_path: Optional[Union[str, Path]] = None,
@@ -104,7 +107,8 @@ class InferencePipeline:
             vad=self.vad,
             repository=speaker_repository,
         )
-        self.whisper_asr = whisper_asr or WhisperASR(model_size_or_path="base.en", device="cpu")
+        self.asr_provider = asr_provider or whisper_asr or create_asr_provider()
+        self.whisper_asr = self.asr_provider
         self.intent_detector = intent_detector or IntentDetector()
 
         init_ms = (time.perf_counter() - t0) * 1000.0
@@ -311,10 +315,11 @@ class InferencePipeline:
 
         timings["speaker_verifier_ms"] = (time.perf_counter() - t_spk_start) * 1000.0
 
-        # ── Stage 3c: faster-whisper Speech-to-Text ──────────────────────────
+        # ── Stage 3c: Speech-to-Text (Whisper or Google STT) ─────────────────
         t_asr_start = time.perf_counter()
-        asr_res: ASRResult = self.whisper_asr.transcribe(waveform, vad_filter=True)
+        asr_res: ASRResult = self.asr_provider.transcribe(waveform, vad_filter=True)
         timings["whisper_asr_ms"] = (time.perf_counter() - t_asr_start) * 1000.0
+
 
         transcript_text = asr_res.transcript
         schema_asr = TranscriptionResult(

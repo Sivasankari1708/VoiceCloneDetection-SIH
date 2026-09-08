@@ -41,10 +41,12 @@ def health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
             "vad": "SileroVAD (active)",
             "deepfake_detector": "DeepfakeCNN v2 (ASVspoof 2019 LA)",
             "speaker_verifier": "SpeechBrain ECAPA-TDNN (192-D)",
+            "asr_provider": f"{getattr(ai_adapter.pipeline.asr_provider, 'provider_name', 'whisper')} ({'streaming cloud gRPC' if getattr(ai_adapter.pipeline.asr_provider, 'provider_name', '') == 'google' else 'int8 CPU'})",
             "whisper_asr": "faster-whisper (int8 CPU)",
             "intent_detector": "IntentDetector (active)",
             "risk_engine": "RiskEngine (active)",
         },
+
     }
 
 

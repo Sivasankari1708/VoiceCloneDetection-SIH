@@ -57,7 +57,9 @@ from backend.models.deepfake_v2 import DeepfakeV2Detector, DeepfakeV2Result
 from backend.models.speaker_enrollment import SpeakerEnrollmentService
 from backend.models.speaker_repository import BaseSpeakerRepository
 from backend.models.speaker_verifier import SpeakerResult, SpeakerVerifier
-from backend.models.whisper_asr import ASRResult, WhisperASR
+from backend.models.asr_base import ASRResult, BaseASR
+from backend.models.whisper_asr import WhisperASR
+
 from backend.pipeline.inference_pipeline import (
     InferencePipeline,
     get_default_pipeline,
@@ -397,8 +399,8 @@ class StreamingSession:
                     new_chunk = " ".join(new_tokens).strip()
                 else:
                     cur_str = " ".join(cur_words)
-                    ex_str = " ".join(ex_words)
-                    if cur_str and cur_str in ex_str:
+                    tail_str = " ".join(tail_ex)
+                    if cur_str and cur_str in tail_str:
                         new_chunk = ""
                     else:
                         # 3. Fuzzy overlap: check if current window words are almost entirely (>= 75%)
@@ -530,6 +532,12 @@ class StreamingAudioPipeline:
                 config=self.config,
             )
             self._sessions[session_id] = session
+            asr_prov = getattr(self.pipeline, "asr_provider", None)
+            if asr_prov is not None:
+                try:
+                    asr_prov.start_stream(session_id)
+                except Exception as exc:
+                    log.warning("[StreamingPipeline] Failed to start ASR stream for session '%s': %s", session_id, exc)
             log.info(
                 "[StreamingPipeline] Started session '%s' (speaker='%s', ref_emb=%s)",
                 session_id,
@@ -555,6 +563,14 @@ class StreamingAudioPipeline:
             return SessionSummary(session_id=session_id)
 
         session.is_active = False
+        asr_prov = getattr(self.pipeline, "asr_provider", None)
+        if asr_prov is not None:
+            try:
+                final_asr = asr_prov.end_stream(session_id)
+                if final_asr.transcript and final_asr.transcript not in session.accumulated_transcript_segments:
+                    session.accumulated_transcript_segments.append(final_asr.transcript)
+            except Exception as exc:
+                log.warning("[StreamingPipeline] Failed to end ASR stream for session '%s': %s", session_id, exc)
         summary = session.get_summary()
         log.info(
             "[StreamingPipeline] Ended session '%s' | Chunks=%d | Audio=%.1fs | Speech=%.1fs | "
@@ -834,24 +850,41 @@ class StreamingAudioPipeline:
             )
         timings["speaker_verifier_ms"] = (time.perf_counter() - t0) * 1000.0
 
-        # ── 7. faster-whisper Speech-to-Text on Rolling Audio Context ───────────────
+        # ── 7. Speech-to-Text (faster-whisper or Google STT) ────────────────
         t0 = time.perf_counter()
-        # Use rolling audio buffer (up to 3.0s = 48,000 samples) so Whisper has full acoustic context
-        # without cutting phonemes at 1.0s boundaries
-        rolling_buf = session.get_audio_buffer()
-        if len(rolling_buf) > 48000:
-            asr_input = rolling_buf[-48000:]
-        elif len(rolling_buf) >= len(chunk_waveform):
-            asr_input = rolling_buf
+        asr_provider = getattr(self.pipeline, "asr_provider", getattr(self.pipeline, "whisper_asr", None))
+
+        if asr_provider is not None and getattr(asr_provider, "provider_name", "whisper") == "google":
+            # For Google STT streaming: send the incremental 1-second chunk frame
+            # (consecutive non-overlapping audio chunks, never the rolling buffer)
+            asr_res: ASRResult = asr_provider.send_audio(
+                session_id=session_id,
+                audio_chunk=chunk_waveform,
+                is_speech=vad_res.speech_detected,
+            )
+            raw_asr_text = asr_res.transcript.strip()
+            if asr_res.is_final and raw_asr_text:
+                chunk_text = raw_asr_text
+                session.append_transcript(raw_asr_text)
+            else:
+                chunk_text = raw_asr_text
+            accumulated_text = session.get_accumulated_transcript()
         else:
-            asr_input = chunk_waveform
+            # For Whisper: use rolling audio buffer (up to 3.0s = 48,000 samples)
+            rolling_buf = session.get_audio_buffer()
+            if len(rolling_buf) > 48000:
+                asr_input = rolling_buf[-48000:]
+            elif len(rolling_buf) >= len(chunk_waveform):
+                asr_input = rolling_buf
+            else:
+                asr_input = chunk_waveform
 
-        asr_res: ASRResult = self.pipeline.whisper_asr.transcribe(asr_input, vad_filter=False)
+            asr_res: ASRResult = asr_provider.transcribe(asr_input, vad_filter=False)
+            raw_asr_text = asr_res.transcript.strip()
+            chunk_text = session.append_incremental_transcript(raw_asr_text)
+            accumulated_text = session.get_accumulated_transcript()
+
         timings["whisper_asr_ms"] = (time.perf_counter() - t0) * 1000.0
-
-        raw_asr_text = asr_res.transcript.strip()
-        chunk_text = session.append_incremental_transcript(raw_asr_text)
-        accumulated_text = session.get_accumulated_transcript()
 
         schema_asr = TranscriptionResult(
             text=chunk_text,

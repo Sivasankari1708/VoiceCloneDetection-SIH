@@ -41,6 +41,10 @@ speechbrain>=1.0
 # ── Faster-Whisper (CTranslate2-based, CPU-optimised ASR) ─────────
 faster-whisper>=1.0
 
+# ── Google Cloud Speech-to-Text (Streaming Cloud ASR Option) ──────
+google-cloud-speech>=2.20.0
+
+
 # ── Schema / serialisation ────────────────────────────────────────
 pydantic>=2.6            # for future API contract validation
 

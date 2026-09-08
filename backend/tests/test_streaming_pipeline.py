@@ -215,3 +215,38 @@ def test_streaming_pipeline_input_tensor_and_numpy():
     assert r_t.audio_meta.sample_rate == 16000
 
     pipeline.end_session("sess_type_test")
+
+
+def test_streaming_session_incremental_transcript_short_phrases():
+    """Verify incremental speech accumulation, duplicate suppression, and short phrase handling."""
+    session = StreamingSession(session_id="test_short_phrases")
+
+    # Chunk 1: initial sentence
+    c1 = session.append_incremental_transcript("Hello, I am testing the VoiceShield system")
+    assert c1 == "Hello, I am testing the VoiceShield system"
+
+    # Chunk 2: rolling window overlap
+    c2 = session.append_incremental_transcript("testing the VoiceShield system with my real human voice")
+    assert c2 == "with my real human voice"
+
+    # Chunk 3: identical repeat in window -> must suppress duplicate
+    c3 = session.append_incremental_transcript("with my real human voice")
+    assert c3 == ""
+
+    # Chunk 4: short phrases
+    c4 = session.append_incremental_transcript("Please verify this call before continuing.")
+    assert c4 == "Please verify this call before continuing."
+
+    c5 = session.append_incremental_transcript("thank you")
+    assert c5 == "thank you"
+
+    c6 = session.append_incremental_transcript("bye")
+    assert c6 == "bye"
+
+    accumulated = session.get_accumulated_transcript()
+    assert "Hello, I am testing the VoiceShield system" in accumulated
+    assert "with my real human voice" in accumulated
+    assert "Please verify this call before continuing." in accumulated
+    assert "thank you" in accumulated
+    assert "bye" in accumulated
+

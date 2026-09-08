@@ -191,6 +191,14 @@ export function mapBackendRiskUpdate(
         isPartial: false,
       };
     }
+  } else if (existingTranscript.length === 0 && update.accumulated_transcript?.trim()) {
+    transcriptSegment = {
+      id: `seg-init-${update.chunk_id || 0}`,
+      speaker: 'caller',
+      text: update.accumulated_transcript.trim(),
+      timestamp: Math.max(0, Date.now() - callStartTime.getTime()),
+      isPartial: false,
+    };
   }
 
   return { security, transcriptSegment };

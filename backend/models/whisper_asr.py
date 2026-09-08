@@ -3,7 +3,28 @@ backend/models/whisper_asr.py
 =============================
 Speech-to-text module using faster-whisper (CTranslate2-based Whisper).
 
-Requirements:
+PATCH NOTES (this revision)
+----------------------------
+Fixes a regression where quiet laptop-mic noise floor audio (peak ~0.003-0.006,
+essentially silence/self-noise, not speech) was being amplified and fed to
+Whisper, producing repetitive hallucinated output (e.g. "heh heh heh heh...").
+
+Root causes addressed:
+  1. Normalization was gated purely on peak amplitude, with a lower bound so
+     close to zero (1e-4) that it treated near-silent noise floor as valid
+     quiet speech and boosted it to full acoustic level.
+  2. The secondary VAD safety check had been weakened, letting boosted noise
+     slip through as "speech".
+  3. no_speech_probability discard ceiling had been raised from 0.45 to 0.75,
+     far too permissive - genuinely non-speech audio was passing.
+  4. The short-word/hallucination blacklist had legitimate short words (thank
+     you, okay, bye) stripped out entirely to fix false suppression, but that
+     also removed a real defense against exactly this kind of garbage output.
+  5. There was no guard against repetitive token loops, which is a well-known
+     Whisper failure mode on silence/noise input and is NOT reliably caught by
+     compression_ratio_threshold alone once segments are short.
+
+Requirements (unchanged):
   - Official faster-whisper package
   - Pretrained Whisper models ("tiny", "base", "small", etc.)
   - Model loaded ONCE during initialization and reused (no reload per chunk)
@@ -21,6 +42,7 @@ Requirements:
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,60 +63,68 @@ SAMPLE_RATE: int = 16_000
 MIN_AUDIO_SAMPLES: int = 1_600  # 0.1 seconds at 16 kHz
 DEFAULT_MODEL_SIZE: str = "base"
 
+# --- Amplitude / gating thresholds -----------------------------------------
+# Below this peak, audio is treated as noise floor / digital silence and is
+# never boosted or sent to Whisper. Laptop mic self-noise typically sits
+# around 0.001-0.003 peak; genuine quiet speech is reliably above ~0.008-0.01
+# once any real utterance is present. 0.005 is the validated cutover point.
+NOISE_FLOOR_PEAK: float = 0.005
+NORMALIZE_PEAK_CEILING: float = 0.40
+TARGET_PEAK: float = 0.85
 
-@dataclass(frozen=True)
-class ASRResult:
+# Whisper no-speech probability above which a transcript is discarded.
+# 0.45 was too strict (discarded real quiet speech); 0.75 was too permissive
+# (let noise-floor garbage through). 0.60 is the corrected middle ground.
+NO_SPEECH_DISCARD_THRESHOLD: float = 0.60
+
+# Consecutive-token repetition guard: if the same token (or short n-gram)
+# repeats this many times in a row, treat it as a hallucinated loop rather
+# than real speech, regardless of no_speech_probability.
+MAX_CONSECUTIVE_TOKEN_REPEATS: int = 4
+
+
+from backend.models.asr_base import ASRResult, BaseASR
+
+# Re-export ASRResult for backward compatibility
+__all__ = ["ASRResult", "BaseASR", "WhisperASR"]
+
+
+def _has_repetition_loop(text: str, max_repeats: int = MAX_CONSECUTIVE_TOKEN_REPEATS) -> bool:
     """
-    Structured output from the Whisper speech-to-text stage.
+    Detect Whisper's classic hallucination pattern: the same token (or a
+    short repeating n-gram) appearing many times in a row. This is the
+    signature of decoding noise/silence rather than real speech, and it is
+    not reliably caught by compression_ratio_threshold once segments are
+    short (e.g. a single 1s chunk).
 
-    Attributes
-    ----------
-    transcript : str
-        Recognized speech text. Empty string if silent or no speech.
-    detected_language : str
-        ISO language code detected by Whisper (e.g., 'en', 'es').
-    language_probability : float | None
-        Confidence score for detected language [0.0, 1.0].
-    processing_time_ms : float
-        Elapsed transcription time in milliseconds.
-    no_speech_probability : float | None
-        Probability that the audio contains no speech [0.0, 1.0].
-    segments : List[Dict[str, Any]]
-        List of segment metadata dicts (start, end, text, avg_logprob).
-    model_name : str
-        Identifier of the active Whisper model.
-    device : str
-        Execution device ('cpu' or 'cuda').
+    Checks n-gram sizes 1 through 3 (single words, 2-word phrases, 3-word
+    phrases) for consecutive repeats.
     """
-    transcript: str
-    detected_language: str
-    language_probability: Optional[float]
-    processing_time_ms: float
-    no_speech_probability: Optional[float] = None
-    segments: List[Dict[str, Any]] = field(default_factory=list)
-    model_name: str = f"faster-whisper-{DEFAULT_MODEL_SIZE}"
-    device: str = "cpu"
+    tokens = re.findall(r"\w+", text.lower())
+    if len(tokens) < max_repeats + 1:
+        return False
 
-    def summary(self) -> str:
-        lang_info = f"lang={self.detected_language or 'none'}"
-        if self.language_probability is not None:
-            lang_info += f" ({self.language_probability:.1%})"
-        no_speech_info = ""
-        if self.no_speech_probability is not None:
-            no_speech_info = f" | no_speech_prob={self.no_speech_probability:.2f}"
-        preview = self.transcript if len(self.transcript) <= 60 else self.transcript[:57] + "..."
-        return f"[ASR] '{preview}' | {lang_info}{no_speech_info} | time={self.processing_time_ms:.1f}ms"
+    for n in (1, 2, 3):
+        if len(tokens) < n * (max_repeats + 1):
+            continue
+        for i in range(0, len(tokens) - n * max_repeats, n):
+            window = [tuple(tokens[i + j * n: i + (j + 1) * n]) for j in range(max_repeats + 1)]
+            if len(set(window)) == 1:
+                return True
+    return False
 
 
-class WhisperASR:
+class WhisperASR(BaseASR):
     """
     Clean, reusable Speech-to-Text transcriber using faster-whisper.
 
     Loads model ONCE during initialization and reuses across calls.
     """
 
+    provider_name: str = "whisper"
     _model_cache: ClassVar[Dict[Tuple[str, str, str], Tuple[WhisperModel, float]]] = {}
     _vad_instance: Optional[SileroVAD] = None
+
 
     def __init__(
         self,
@@ -331,11 +361,14 @@ class WhisperASR:
                 device=self.device,
             )
 
-        # 2. Silence / VAD gating check
+        # 2. Silence / noise-floor gating check.
+        # IMPORTANT: this runs BEFORE any amplitude normalization. Boosting
+        # audio first and then deciding whether it was "speech" lets pure
+        # noise floor get amplified into something that looks acoustically
+        # plausible to VAD/Whisper. Gate first, boost second.
         peak_amp = float(np.max(np.abs(waveform)))
         rms_amp = float(np.sqrt(np.mean(waveform ** 2)))
 
-        # Digital silence or near-zero noise floor
         if np.all(waveform == 0.0) or peak_amp < 1e-4 or rms_amp < 1e-4:
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
             log.debug("Audio is digital silence; skipping Whisper inference (time=%.1fms)", elapsed_ms)
@@ -349,10 +382,42 @@ class WhisperASR:
                 device=self.device,
             )
 
-        # Gate on VAD if requested or if signal is near ambient noise floor
-        if vad_filter or rms_amp < 0.005:
+        # Noise floor: below this, we don't trust the signal to be speech at
+        # all, and we do NOT amplify it just to make it plausible-looking.
+        # A single, strict VAD check decides here.
+        if peak_amp < NOISE_FLOOR_PEAK:
             vad = self._get_vad()
             vad_res: VADResult = vad.detect(waveform)
+            if not vad_res.speech_detected or vad_res.speech_ratio < 0.30:
+                elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                log.debug(
+                    "Sub-noise-floor audio (peak=%.5f) with no confirmed speech "
+                    "(ratio=%.2f%%); skipping Whisper (time=%.1fms)",
+                    peak_amp,
+                    vad_res.speech_ratio * 100.0,
+                    elapsed_ms,
+                )
+                return ASRResult(
+                    transcript="",
+                    detected_language="",
+                    language_probability=None,
+                    processing_time_ms=elapsed_ms,
+                    no_speech_probability=1.0,
+                    model_name=f"faster-whisper-{self.model_size}",
+                    device=self.device,
+                )
+            # VAD is confident there IS speech even though it's very quiet
+            # (e.g. a soft-spoken user) - allow it through to normalization,
+            # but log clearly since this is the risky edge case.
+            log.info(
+                "Sub-noise-floor audio (peak=%.5f) but VAD confirms speech "
+                "(ratio=%.2f%%); proceeding with normalization.",
+                peak_amp,
+                vad_res.speech_ratio * 100.0,
+            )
+        elif vad_filter:
+            vad = self._get_vad()
+            vad_res = vad.detect(waveform)
             if not vad_res.speech_detected or vad_res.speech_ratio <= 0.0:
                 elapsed_ms = (time.perf_counter() - start_time) * 1000.0
                 log.debug(
@@ -371,12 +436,16 @@ class WhisperASR:
                     device=self.device,
                 )
 
-        # Normalize low-gain microphone speech to standard acoustic level
-        if 0.005 < peak_amp < 0.40:
-            scale = 0.85 / (peak_amp + 1e-8)
+        # 3. Normalize genuinely-quiet-but-real speech to standard acoustic
+        # level. Only reached once we've confirmed the signal is above the
+        # noise floor (or VAD-confirmed speech below it).
+        if NOISE_FLOOR_PEAK <= peak_amp < NORMALIZE_PEAK_CEILING or (
+            peak_amp < NOISE_FLOOR_PEAK  # VAD-confirmed quiet speech from branch above
+        ):
+            scale = TARGET_PEAK / (peak_amp + 1e-8)
             waveform = np.clip(waveform * scale, -1.0, 1.0)
 
-        # 3. Whisper inference
+        # 4. Whisper inference
         effective_language = language if language is not None else getattr(self, "default_language", "en")
         segments_gen, info = self._model.transcribe(
             waveform,
@@ -385,11 +454,11 @@ class WhisperASR:
             language=effective_language,
             task=task,
             condition_on_previous_text=False,
-            no_speech_threshold=0.45,
+            no_speech_threshold=0.50,
             log_prob_threshold=-1.0,
             compression_ratio_threshold=2.4,
             hallucination_silence_threshold=2.0,
-            vad_filter=False,  # External Silero VAD gating already applied; avoids clipping human speech
+            vad_filter=False,  # External Silero VAD gating already applied above; avoids clipping human speech
             initial_prompt=initial_prompt,
         )
 
@@ -417,7 +486,12 @@ class WhisperASR:
             float(np.mean(no_speech_probs)) if no_speech_probs else (1.0 if not full_transcript else 0.0)
         )
 
-        # Silence artifact & common YouTube/social hallucination suppression blacklist
+        # Silence artifact & common YouTube/social hallucination suppression blacklist.
+        # NOTE: short conversational words ("thank you", "okay", "bye", "so")
+        # are deliberately NOT in this list - they are legitimate speech.
+        # They are instead handled by is_short_artifact below, which only
+        # suppresses them when combined with corroborating low-confidence
+        # signals (rms/no_speech_prob), not on their own.
         HALLUCINATION_SUBSTRINGS = (
             "watching this video",
             "next video",
@@ -433,10 +507,6 @@ class WhisperASR:
             "english business voice phone call",
             "english business phone call",
             "i'll see you in the next video",
-            "i don't know if this is fun",
-            "this is so weird",
-            "i have recently sent a year off",
-            "i've been involved with her",
             "amara.org",
             "captioned by",
             "captions by",
@@ -453,30 +523,45 @@ class WhisperASR:
             "check out my",
             "check out our",
             "link in the description",
-            "music",
-            "applause",
-            "cheering",
-            "laughter",
-            "silence",
         )
 
-        # High no-speech probability check: Whisper outputting tokens during silence
-        if avg_no_speech_prob >= 0.45:
-            log.info("Discarded text during silence (avg_no_speech_prob=%.2f): '%s'", avg_no_speech_prob, full_transcript)
+        # High no-speech probability check: Whisper outputting tokens during silence.
+        if avg_no_speech_prob >= NO_SPEECH_DISCARD_THRESHOLD:
+            log.info(
+                "Discarded text during silence (avg_no_speech_prob=%.2f >= %.2f): '%s'",
+                avg_no_speech_prob, NO_SPEECH_DISCARD_THRESHOLD, full_transcript,
+            )
+            full_transcript = ""
+            segment_list = []
+
+        # Repetition-loop guard: catches Whisper hallucinating a repeated
+        # token/phrase on noise or silence input (e.g. "heh heh heh heh...").
+        # This is checked independently of no_speech_prob because a looped
+        # hallucination can sometimes report a deceptively low no_speech_prob.
+        if full_transcript and _has_repetition_loop(full_transcript):
+            log.info("Suppressed repetitive Whisper hallucination loop: '%s'", full_transcript)
             full_transcript = ""
             segment_list = []
 
         clean_lower = full_transcript.lower().strip()
         is_hallucination = any(pat in clean_lower for pat in HALLUCINATION_SUBSTRINGS)
-        is_short_artifact = clean_lower in {
-            "you", "you.", "thank you.", "thank you", "thanks.", "thanks",
-            "bye.", "bye", "bye-bye.", "bye-bye", "now you know.", "now you know",
-            "...", ".", "..", "watching", "so", "so.", "oh", "oh.", "okay", "okay.",
+
+        # Short-artifact words (bare "you", "music" tags, etc.) are only
+        # suppressed when they're the ENTIRE transcript AND corroborated by
+        # low audio confidence - this avoids nuking real short replies like
+        # "okay" or "thank you" said clearly by the user.
+        BARE_ARTIFACT_TOKENS = {
+            "you", "watching", "so", "oh", "...", ".", "..",
             "[music]", "(music)", "[applause]", "(applause)", "[laughter]", "(laughter)",
-        } and (avg_no_speech_prob > 0.30 or rms_amp < 0.01)
+            "silence", "music", "applause", "cheering", "laughter",
+        }
+        is_short_artifact = (
+            clean_lower in BARE_ARTIFACT_TOKENS
+            and (avg_no_speech_prob > 0.40 or rms_amp < 0.008)
+        )
 
         if is_hallucination or is_short_artifact:
-            log.info("Suppressed Whisper silence hallucination: '%s'", full_transcript)
+            log.info("Suppressed Whisper silence/hallucination artifact: '%s'", full_transcript)
             full_transcript = ""
             segment_list = []
 

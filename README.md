@@ -124,10 +124,11 @@ Unlike naive acoustic classifiers that rely on a single score, this pipeline com
 | **Alternative Deepfake** | `backend/models/deepfake_detector.py` | HuggingFace Wav2Vec2 | Pretrained transformer anti-spoofing backbone (`Vansh180/deepfake-audio-wav2vec2`). |
 | **Speaker Biometrics** | `backend/models/speaker_verifier.py` | SpeechBrain ECAPA-TDNN | Extracts 192-dimensional unit-norm embeddings. Computes cosine similarity against enrolled profile. |
 | **Speaker Enrollment** | `backend/models/speaker_enrollment.py` | Mean-aggregation + L2 norm | Multi-sample enrollment engine with internal variance checking and filesystem/in-memory persistence. |
-| **Speech-to-Text** | `backend/models/whisper_asr.py` | `faster-whisper` (CTranslate2) | High-speed CPU int8 quantized speech-to-text with language detection and confidence scoring. |
+| **Speech-to-Text** | `backend/models/asr_base.py`, `whisper_asr.py`, `google_stt_asr.py` | `faster-whisper` (local int8) OR Google Cloud STT | Swappable ASR provider architecture (`ASR_PROVIDER=whisper` or `ASR_PROVIDER=google`) outputting standardized `ASRResult`. |
 | **Intent Detection** | `backend/intent/intent_detector.py` | Regex & Keyword Classifier | Flags `PAYMENT_TRANSFER`, `OTP_REQUEST`, `CREDENTIAL_REQUEST`, and `URGENT_REQUEST` threats. |
 | **Security Risk Engine** | `backend/pipeline/risk_engine.py` | Multi-criteria Security Matrix | Synthesizes acoustic synthesis probability, biometric similarity, and intent into actionable decisions. |
 | **Streaming Pipeline** | `backend/pipeline/streaming_pipeline.py` | Chunked Engine + Rolling Buffer | Sub-second chunk processing (RTF ~0.25 on CPU), EMA score smoothing, fast alert escalation ($\ge 0.85$). |
+
 
 ---
 
@@ -394,7 +395,94 @@ python scripts/simulate_streaming.py --audio samples/genuine/test.wav --chunk-ms
 
 ---
 
+## ASR Provider Configuration (Whisper vs. Google Cloud STT)
+
+VoiceShield features a clean, pluggable ASR provider abstraction (`backend/models/asr_base.py`) allowing seamless toggling between local offline transcription and real-time cloud streaming speech-to-text.
+
+### Provider Comparison & Privacy Boundaries
+
+| Capability / Attribute | `ASR_PROVIDER=whisper` (Local Default) | `ASR_PROVIDER=google` (Optional Cloud) |
+|---|---|---|
+| **Execution Environment** | **100% Local (On-Device / CPU)** | **Google Cloud Speech-to-Text API** |
+| **Network Requirement** | Zero network required (fully offline) | Outbound HTTPS/gRPC network required |
+| **Audio Privacy** | Audio never leaves the local machine | Raw speech chunks transmitted to Google Cloud STT |
+| **Quantization & Speed** | CTranslate2 `int8` CPU inference (~200ms) | Low-latency bidirectional gRPC streaming |
+| **Interim Hypotheses** | Segmented rolling-window diffing | Native Google streaming `is_final` handling |
+| **Supported Languages** | English (or multilingual Whisper models) | Configurable BCP-47 (`en-IN`, `hi-IN`, `ta-IN`, etc.) |
+| **Remaining Pipeline** | DeepfakeCNN & ECAPA remain 100% local | DeepfakeCNN & ECAPA remain 100% local |
+
+> [!IMPORTANT]
+> **Strict Security Isolation**: Only speech audio chunks are transmitted to Google Cloud STT. Deepfake detection (DeepfakeCNN v2), speaker verification (SpeechBrain ECAPA-TDNN), Intent Extraction, Risk Scoring, Security Policies, Incidents, and SOC feeds remain strictly executed locally inside the VoiceShield backend.
+
+---
+
+### Configuring Google Cloud STT
+
+#### 1. Authenticate with Google Cloud Application Default Credentials (ADC)
+Ensure the Google Cloud CLI (`gcloud`) is installed and authenticated locally:
+
+```bash
+# Authenticate local development environment
+gcloud auth application-default login
+
+# Ensure the Speech-to-Text API is enabled in your active GCP project:
+gcloud services enable speech.googleapis.com
+```
+
+> [!NOTE]
+> VoiceShield uses Application Default Credentials (ADC). **Never commit service account JSON files or API keys** to source control.
+
+#### 2. Configure Environment Variables
+Set the active provider in `.env` (or via environment variables):
+
+```bash
+# Enable Google Cloud Speech-to-Text as active provider
+ASR_PROVIDER=google
+
+# Set target language (default is Indian English: en-IN)
+ASR_LANGUAGE=en-IN
+```
+
+Supported language codes include `en-IN`, `en-US`, `hi-IN`, `ta-IN`, `te-IN`, `kn-IN`, and `ml-IN`.
+
+---
+
+### Switching Back to Local Whisper
+To switch back to offline local Whisper inference at any time:
+
+```bash
+ASR_PROVIDER=whisper
+```
+No code changes are required.
+
+---
+
+### Running the Live Microphone Test in the User Frontend
+
+1. **Start the VoiceShield Backend**:
+   ```bash
+   cd backend
+   uvicorn backend.platform.server.app:app --host 0.0.0.0 --port 8000 --reload
+   ```
+
+2. **Start the Frontend**:
+   ```bash
+   cd user_frontend
+   npm run dev
+   ```
+
+3. **Open the Frontend**:
+   - Navigate to `http://localhost:5174` (or your Vite dev server port).
+   - Click **Live Call / Call Simulation**.
+   - Speak naturally into the browser microphone:
+     - *"Hello, I am testing the VoiceShield system using my real human voice."*
+     - *"Okay, thank you. Bye."*
+   - Watch the live speech appear instantaneously in the **LIVE TRANSCRIPT** panel without duplication.
+
+---
+
 ## Performance & Latency Telemetry
+
 
 Benchmark measured on **Apple Silicon (M-series / CPU execution)** under Python 3.14:
 

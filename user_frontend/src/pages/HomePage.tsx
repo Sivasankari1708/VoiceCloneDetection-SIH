@@ -133,7 +133,7 @@ export default function HomePage() {
         <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">Quick Actions</h2>
         <div className="grid grid-cols-3 gap-3">
           <button
-            onClick={() => navigate('/sender')}
+            onClick={() => navigate('/live?start=mic')}
             className="flex flex-col items-center gap-2 p-4 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm cursor-pointer"
           >
             <PhoneCall size={22} />

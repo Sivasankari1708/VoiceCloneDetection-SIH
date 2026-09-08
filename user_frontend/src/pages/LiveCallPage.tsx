@@ -203,6 +203,27 @@ export default function LiveCallPage() {
     };
   }, [querySessionId, queryCallerName, queryClaimedSpeaker, updateActiveCall]);
 
+  const handleStartLiveMic = useCallback(async () => {
+    setStartTime(new Date());
+    setRiskHistory([]);
+    setMicActive(true);
+    if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
+      liveCallStream.resumePlaybackAudio();
+    }
+    await liveCallStream.start({
+      callerName: 'Live Voice (Microphone)',
+      receiveOnly: false,
+      waitForAcceptance: false,
+    });
+  }, []);
+
+  const queryStart = searchParams.get('start');
+  useEffect(() => {
+    if (queryStart === 'mic' && !activeCall && !activeSessionIdRef.current) {
+      handleStartLiveMic();
+    }
+  }, [queryStart, activeCall, handleStartLiveMic]);
+
   const handleToggleMic = useCallback(() => {
     const nextState = !micActive;
     setMicActive(nextState);
@@ -249,42 +270,23 @@ export default function LiveCallPage() {
 
   if (!querySessionId && !activeCall) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] p-4 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4 border border-blue-200 shadow-xs">
-          <Radio size={32} />
-        </div>
-        <h2 className="text-xl font-bold text-slate-800">No Active Call Session</h2>
-        <p className="text-slate-500 text-sm mt-2 max-w-md">
-          There is currently no ongoing call session. To test real-time AI voice clone protection, launch an attack call from the Attacker Console or wait for an incoming call on this device.
-        </p>
-        <div className="mt-6 flex items-center gap-3">
-          <Button variant="primary" onClick={() => navigate('/attacker')}>
-            Open Attacker Console
-          </Button>
-          <Button variant="outline" onClick={() => navigate('/')}>
-            Back to Dashboard
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (!querySessionId && !activeCall) {
-    return (
       <div className="flex flex-col items-center justify-center min-h-[70vh] p-6 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-500 mb-4 shadow-sm">
-          <PhoneOff size={28} className="text-slate-400" />
+        <div className="w-16 h-16 rounded-2xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600 mb-4 shadow-sm">
+          <Mic size={28} className="animate-pulse" />
         </div>
-        <h2 className="text-xl font-bold text-slate-800">No Active Call Session</h2>
-        <p className="text-slate-500 text-sm mt-1.5 max-w-md">
-          There is no active incoming call to analyze. When an incoming call is placed to your account, VoiceShield will prompt you to accept and monitor live.
+        <h2 className="text-xl font-bold text-slate-800">Live Call & Microphone Analysis</h2>
+        <p className="text-slate-500 text-sm mt-2 max-w-md">
+          Start real-time Whisper ASR speech-to-text, deepfake detection, and biometric verification using your real microphone voice.
         </p>
         <div className="mt-6 flex flex-wrap gap-3 justify-center">
-          <Button variant="primary" size="md" onClick={() => navigate('/')}>
-            Return to Dashboard
+          <Button variant="primary" size="md" icon={<Mic size={16} />} onClick={handleStartLiveMic}>
+            Start Microphone Analysis
           </Button>
           <Button variant="outline" size="md" onClick={() => navigate('/attacker')}>
             Open Attacker Console
+          </Button>
+          <Button variant="outline" size="md" onClick={() => navigate('/')}>
+            Back to Dashboard
           </Button>
         </div>
       </div>
@@ -467,7 +469,7 @@ export default function LiveCallPage() {
               <div className="flex-1 flex flex-col justify-between">
                 {transcript.length === 0 ? (
                   <div className="py-8 text-center text-slate-400 text-sm italic">
-                    Listening for conversation... Speech will appear here as Whisper AI transcribes incoming voice chunks.
+                    Listening for conversation... Speech will appear here as live speech-to-text transcribes incoming voice chunks.
                   </div>
                 ) : (
                   <TranscriptDisplay segments={transcript} maxHeight="220px" />
@@ -475,10 +477,11 @@ export default function LiveCallPage() {
                 <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
                   <span className="flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                    Whisper AI transcribing live voice
+                    Live speech recognition active
                   </span>
                   <span className="text-slate-400 font-mono text-[11px]">{transcript.length} dialogue segments</span>
                 </div>
+
               </div>
             </Card>
           </div>

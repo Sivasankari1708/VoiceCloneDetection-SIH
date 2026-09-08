@@ -44,6 +44,8 @@ class PipelineConfig:
     speaker_storage_dir: str = "data/enrolled_speakers"  # directory for profile & embedding storage
 
     # --- Transcription ---
+    asr_provider: str = "whisper"            # "whisper" | "google"
+    asr_language: str = "en-IN"              # BCP-47 language code (e.g. "en-IN", "en-US", "hi-IN")
     whisper_model_size: str = "base"         # tiny | base | small | medium
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
@@ -69,13 +71,13 @@ class PipelineConfig:
         Create a PipelineConfig populated from environment variables.
 
         Environment variable names follow UPPER_SNAKE pattern, e.g.:
-          TARGET_SAMPLE_RATE, VAD_THRESHOLD, WHISPER_MODEL_SIZE, ...
+          ASR_PROVIDER, ASR_LANGUAGE, TARGET_SAMPLE_RATE, VAD_THRESHOLD, ...
 
         Falls back to field defaults when an env var is absent.
-
-        TODO: Add full env-var parsing for every field.
         """
         return cls(
+            asr_provider=os.getenv("ASR_PROVIDER", "whisper").lower().strip(),
+            asr_language=os.getenv("ASR_LANGUAGE", "en-IN").strip(),
             target_sample_rate=int(os.getenv("TARGET_SAMPLE_RATE", "16000")),
             vad_threshold=float(os.getenv("VAD_THRESHOLD", "0.5")),
             deepfake_checkpoint_path=os.getenv(
@@ -94,4 +96,5 @@ class PipelineConfig:
             streaming_smoothing_alpha=float(os.getenv("STREAMING_SMOOTHING_ALPHA", "0.4")),
             log_level=os.getenv("LOG_LEVEL", "DEBUG"),
         )
+
 

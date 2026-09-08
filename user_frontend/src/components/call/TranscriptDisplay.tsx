@@ -13,14 +13,14 @@ const TranscriptSegmentRow = React.memo(({ seg }: { seg: TranscriptSegment }) =>
     <div className={`transition-opacity duration-200 ${isCaller ? '' : 'flex justify-end'}`}>
       <div className={`max-w-[85%] ${isCaller ? '' : 'text-right'}`}>
         <span className={`text-xs font-medium block mb-0.5 ${isCaller ? 'text-slate-500' : 'text-blue-500'}`}>
-          {isCaller ? 'Caller' : 'You'}
+          {isCaller ? 'Speaker' : 'You'}
         </span>
         <div
-          className={`text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 inline-block shadow-xs leading-relaxed ${
+          className={`text-sm text-slate-800 bg-white border border-slate-200 rounded-lg px-3 py-2 inline-block shadow-xs leading-relaxed ${
             seg.isPartial ? 'opacity-60 italic' : ''
           }`}
         >
-          &ldquo;{seg.text}&rdquo;
+          {seg.text}
         </div>
       </div>
     </div>

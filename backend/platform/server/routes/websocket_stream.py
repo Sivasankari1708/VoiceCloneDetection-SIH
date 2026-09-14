@@ -78,6 +78,7 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
                 raw_data = message["bytes"]
                 chunk_counter += 1
                 chunk_idx = chunk_counter
+                log.info("[STREAM] Session '%s' | Received binary audio chunk #%d (%d bytes)", session_id, chunk_idx, len(raw_data))
             elif "text" in message and message["text"]:
                 try:
                     payload = json.loads(message["text"])
@@ -92,18 +93,21 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
                 chunk_idx = payload.get("chunk_id", chunk_counter + 1)
                 chunk_counter = max(chunk_counter, chunk_idx)
                 raw_data = payload.get("audio", "")
+                log.info("[STREAM] Session '%s' | Received JSON audio chunk #%d", session_id, chunk_idx)
             else:
                 continue
 
             # Process chunk through Member 1 pipeline and Security Orchestrator
             try:
+                log.info("[STREAM] Processing chunk #%d through ML pipeline...", chunk_idx)
                 await orchestrator.process_stream_chunk(
                     session_id=session_id,
                     chunk_data=raw_data,
                     chunk_id=chunk_idx,
                 )
+                log.info("[STREAM] Chunk #%d processed successfully & RISK_UPDATE dispatched", chunk_idx)
             except Exception as exc:
-                log.error("[WS:Stream] Error processing chunk %s for session %s: %s", chunk_idx, session_id, exc)
+                log.error("[STREAM] Error processing chunk %s for session %s: %s", chunk_idx, session_id, exc)
                 await websocket.send_text(
                     json.dumps({
                         "event": WebSocketEventType.ERROR,
@@ -167,3 +171,25 @@ async def websocket_org_alerts(websocket: WebSocket, organization_id: str):
     finally:
         await dispatcher.unregister_org_socket(organization_id, websocket)
         db.close()
+# -----------------------------------------------------------------------------
+# 3. Personal User Alert & Incoming Call Feed
+# -----------------------------------------------------------------------------
+
+@router.websocket("/ws/user/{user_id}")
+async def websocket_user_feed(websocket: WebSocket, user_id: str):
+    await websocket.accept()
+    dispatcher = AlertDispatcher.get_instance()
+    await dispatcher.register_user_socket(user_id, websocket)
+    try:
+        while True:
+            text = await websocket.receive_text()
+            try:
+                msg = json.loads(text)
+                if msg.get("type") == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+            except Exception:
+                pass
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await dispatcher.unregister_user_socket(user_id, websocket)

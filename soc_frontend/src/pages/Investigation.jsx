@@ -1,44 +1,35 @@
 // src/pages/Investigation.jsx
+// VoiceShield Enterprise SOC — Event Reporting & Response Center
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { useIncidents } from '../hooks/useIncidents';
 import { SeverityTag } from '../components/common/SeverityTag';
-import { formatStatus, getRiskColor, getRiskBarColor } from '../utils/formatters';
+import { formatStatus } from '../utils/formatters';
 import { Button } from '../components/common/Button';
 import { Card } from '../components/common/Card';
-import { RiskOverTimeChart } from '../components/incidents/RiskOverTimeChart';
-import { DetectionEvidenceCard } from '../components/incidents/DetectionEvidenceCard';
-import { IdentityVerificationCard } from '../components/incidents/IdentityVerificationCard';
-import { ConversationIntelligenceCard } from '../components/incidents/ConversationIntelligenceCard';
-import { ExplainabilityCard } from '../components/incidents/ExplainabilityCard';
 import { IncidentTimeline } from '../components/incidents/IncidentTimeline';
 import { ResolutionModal } from '../components/incidents/ResolutionModal';
 import { AssignModal } from '../components/incidents/AssignModal';
+import { FinancialFraudReportModal } from '../components/incidents/FinancialFraudReportModal';
 import {
   ArrowLeft,
   ShieldAlert,
-  UserCheck,
   AlertOctagon,
   CheckCircle,
-  Clock,
   PhoneCall,
-  User,
-  Building2,
   FileCheck2,
-  Lock,
-  Share2,
-  Send,
-  AlertTriangle
+  FileText,
+  ShieldCheck,
 } from 'lucide-react';
 
 export function Investigation() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const { incidents, loading, acknowledge, escalate, resolve, update } = useIncidents();
 
   const [incident, setIncident] = useState(null);
   const [isResolutionModalOpen, setIsResolutionModalOpen] = useState(false);
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  const [isFraudModalOpen, setIsFraudModalOpen] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState('');
 
   useEffect(() => {
@@ -51,7 +42,7 @@ export function Investigation() {
   if (loading && !incident) {
     return (
       <div className="p-12 text-center text-xs font-mono text-slate-500">
-        Loading investigation workspace for {id}...
+        Loading incident event workspace for {id}...
       </div>
     );
   }
@@ -68,16 +59,15 @@ export function Investigation() {
   }
 
   const statusMeta = formatStatus(incident.status);
-  const riskColor = getRiskColor(incident.riskScore);
 
   const showFeedback = (msg) => {
     setFeedbackMessage(msg);
-    setTimeout(() => setFeedbackMessage(''), 4000);
+    setTimeout(() => setFeedbackMessage(''), 4500);
   };
 
   const handleAcknowledge = async () => {
     await acknowledge(incident.id, 'Sarah Chen (SOC Lead)');
-    showFeedback('Incident successfully acknowledged by Sarah Chen (SOC Lead).');
+    showFeedback('Incident acknowledged by Sarah Chen (SOC Lead).');
   };
 
   const handleEscalate = async () => {
@@ -90,24 +80,90 @@ export function Investigation() {
     showFeedback(`Incident reassigned to ${analystName}.`);
   };
 
-  const handleVerifyIdentityCallback = () => {
-    showFeedback('Secondary Out-of-Band Callback initiated to registered executive device.');
+  const handleUserCallback = () => {
+    showFeedback('Out-of-Band Callback placed to target employee (Simulation).');
   };
 
-  const handleRequestVerification = () => {
-    showFeedback('Additional Verification prompt dispatched to target receiver endpoint.');
+  const handleFraudReportComplete = (details) => {
+    showFeedback(`Draft report routed to National Cyber Crime Portal (1930 Helpline) — Reference: ${details.incidentId} (Simulation).`);
   };
+
+  // Determine possible credential / financial exposure
+  const isCredentialOrFinancialExposure =
+    incident.severity === 'CRITICAL' ||
+    (incident.intent && incident.intent.includes('FINANCIAL')) ||
+    (incident.scenario && incident.scenario.toLowerCase().includes('wire')) ||
+    (incident.conversationIntelligence?.sensitiveKeywords || []).some(
+      (k) =>
+        k.toLowerCase().includes('wire') ||
+        k.toLowerCase().includes('otp') ||
+        k.toLowerCase().includes('transfer') ||
+        k.toLowerCase().includes('authorization')
+    );
+
+  // User intervention status
+  const userInterventionStatus = incident.status === 'CONFIRMED_ATTACK'
+    ? 'PROTECTED AUTOMATICALLY (SIMULATION)'
+    : incident.status === 'RESOLVED'
+    ? 'RESOLVED BY OPERATOR'
+    : 'PROTECTED AUTOMATICALLY (SIMULATION)';
+
+  // Structured Intervention Timeline (Objective 8)
+  const interventionTimeline = [
+    {
+      id: 'tl-1',
+      time: '13:21:02',
+      event: 'Suspicious conversation anomalies detected.',
+      severity: 'HIGH',
+    },
+    {
+      id: 'tl-2',
+      time: '13:21:04',
+      event: 'Employee prompted to verify caller.',
+      severity: 'MEDIUM',
+    },
+    {
+      id: 'tl-3',
+      time: '13:21:06',
+      event: 'Active Challenge Presented to caller (Liveness/Verification Check).',
+      severity: 'INFO',
+    },
+    {
+      id: 'tl-4',
+      time: '13:21:08',
+      event: 'Verification Failed. Active liveness check unsuccessful.',
+      severity: 'CRITICAL',
+    },
+    {
+      id: 'tl-5',
+      time: '13:21:10',
+      event: 'Protective action: Call placed on hold (Simulation).',
+      severity: 'CRITICAL',
+    },
+    {
+      id: 'tl-6',
+      time: '13:21:14',
+      event: 'Session severed by VoiceShield automated protection protocol (Simulation).',
+      severity: 'CRITICAL',
+    },
+    {
+      id: 'tl-7',
+      time: '13:21:15',
+      event: 'Security incident registered and routed to Enterprise SOC queue.',
+      severity: 'INFO',
+    },
+  ];
 
   return (
     <div className="space-y-6 font-mono pb-12">
       {/* Toast Feedback Notification */}
       {feedbackMessage && (
-        <div className="p-3 bg-emerald-950/80 border border-emerald-700 text-emerald-200 text-xs rounded-md flex items-center justify-between shadow-lg">
+        <div className="p-3 bg-blue-950/80 border border-blue-700 text-blue-200 text-xs rounded-md flex items-center justify-between shadow-lg">
           <div className="flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 text-emerald-400" />
+            <CheckCircle className="w-4 h-4 text-blue-400" />
             <span>{feedbackMessage}</span>
           </div>
-          <button onClick={() => setFeedbackMessage('')} className="text-emerald-400 hover:text-emerald-200">✕</button>
+          <button onClick={() => setFeedbackMessage('')} className="text-blue-400 hover:text-blue-200 cursor-pointer">✕</button>
         </div>
       )}
 
@@ -137,7 +193,7 @@ export function Investigation() {
             </h1>
           </div>
 
-          {/* Quick Action Buttons */}
+          {/* Quick Action Header Buttons */}
           <div className="flex items-center gap-2 flex-wrap">
             {incident.status === 'OPEN' && (
               <Button variant="secondary" size="sm" onClick={handleAcknowledge}>
@@ -158,15 +214,9 @@ export function Investigation() {
               {incident.status === 'ESCALATED' ? 'Escalated to CIRT' : 'Escalate to CIRT'}
             </Button>
 
-            {incident.status !== 'RESOLVED' && incident.status !== 'FALSE_POSITIVE' && incident.status !== 'CONFIRMED_ATTACK' ? (
-              <Button variant="primary" size="sm" onClick={() => setIsResolutionModalOpen(true)}>
-                Resolve Incident
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" onClick={() => setIsResolutionModalOpen(true)}>
-                Update Verdict
-              </Button>
-            )}
+            <Button variant="primary" size="sm" onClick={() => setIsResolutionModalOpen(true)}>
+              Resolve Incident
+            </Button>
           </div>
         </div>
       </div>
@@ -205,202 +255,196 @@ export function Investigation() {
 
         <div className="p-3 bg-soc-card border border-soc-border rounded">
           <span className="text-2xs text-slate-500 uppercase block font-semibold">Timestamp</span>
-          <span className="text-xs text-slate-200 font-bold block mt-1">{incident.createdAt?.split(' ')[1] || 'N/A'}</span>
-          <span className="text-2xs text-slate-400 block">{incident.createdAt?.split(' ')[0]}</span>
+          <span className="text-xs text-slate-200 font-bold block mt-1">{incident.createdAt?.split(' ')[1] || '13:21:15'}</span>
+          <span className="text-2xs text-slate-400 block">{incident.createdAt?.split(' ')[0] || '2026-09-13'}</span>
         </div>
       </div>
 
-      {/* Resolution Verdict Banner (If Resolved) */}
-      {incident.resolution && (
-        <div className="p-4 bg-slate-900/90 border border-slate-700 rounded-md space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-2xs uppercase tracking-widest text-slate-400 font-bold">
-              Official Resolution Record
-            </span>
-            <span className="text-2xs text-slate-500">Resolved at: {incident.resolution.resolvedAt}</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-bold text-slate-400 uppercase">Final Verdict:</span>
-            <span className={`px-2.5 py-0.5 rounded text-xs font-bold ${formatStatus(incident.resolution.verdict).badge}`}>
-              {formatStatus(incident.resolution.verdict).label}
-            </span>
-            <span className="text-2xs text-slate-400 font-mono">• Investigator: {incident.resolution.resolvedBy}</span>
-          </div>
-          <p className="text-xs text-slate-300 bg-slate-950/60 p-2.5 rounded border border-slate-800">
-            {incident.resolution.reason}
-          </p>
-        </div>
-      )}
-
-      {/* Main Analysis Grid */}
+      {/* Main Grid: Event Reporting & Limited Actions */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Risk & Detection Details */}
+        {/* Left Column (8 cols): Event Summary, Exposure, User Intervention Status */}
         <div className="lg:col-span-8 space-y-6">
-          {/* Overall Risk & Risk Breakdown */}
-          <Card title="Overall Risk Scoring & Biometric Breakdown">
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
-              {/* Overall Risk Gauge */}
-              <div className="md:col-span-4 p-4 rounded bg-slate-900/60 border border-slate-800 text-center flex flex-col justify-center">
-                <span className="text-2xs text-slate-500 uppercase tracking-widest block font-semibold">
-                  Synthesized Risk Score
-                </span>
-                <div className="my-2">
-                  <span className={`text-4xl font-black ${riskColor}`}>
-                    {incident.riskScore}
-                  </span>
-                  <span className="text-sm font-bold text-slate-500"> / 100</span>
+          {/* Card 1: What Happened? (Event Overview) */}
+          <Card title="Event Summary & Threat Description">
+            <div className="space-y-4">
+              <div className="p-3.5 bg-slate-900/80 rounded border border-slate-800 text-xs leading-relaxed text-slate-300">
+                <div className="font-bold text-slate-100 mb-1 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-soc-accent" />
+                  <span>Threat Event Description</span>
                 </div>
-                <div className="mt-1">
-                  <span className={`px-2.5 py-1 rounded text-xs font-bold tracking-wider ${incident.overallRisk?.level === 'CRITICAL' ? 'bg-red-950/80 text-red-300 border border-red-700' : 'bg-orange-950/80 text-orange-300 border border-orange-700'}`}>
-                    {incident.overallRisk?.level || incident.severity}
-                  </span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-2">
-                  Recommended Action: <strong className="text-slate-300">{incident.overallRisk?.recommendation || 'ESCALATE'}</strong>
-                </span>
+                <p>
+                  Caller claiming to be <strong className="text-red-300">{incident.claimedIdentity?.name}</strong> placed an unsolicited call to employee <strong className="text-slate-100">{incident.target?.name}</strong> ({incident.target?.department}). The caller exerted artificial urgency to solicit sensitive authorization and financial wire execution.
+                </p>
               </div>
 
-              {/* Sub-Risk Breakdown Bars */}
-              <div className="md:col-span-8 space-y-2.5">
-                <div>
-                  <div className="flex justify-between text-2xs mb-1">
-                    <span className="text-slate-400">Voice Authenticity (Acoustic Deepfake Likelihood)</span>
-                    <strong className="text-red-400">{incident.riskBreakdown?.voiceAuthenticity}%</strong>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-red-500" style={{ width: `${incident.riskBreakdown?.voiceAuthenticity}%` }} />
-                  </div>
+              {/* What Action Was Taken? */}
+              <div className="p-3.5 bg-slate-900/80 rounded border border-slate-800 text-xs leading-relaxed text-slate-300">
+                <div className="font-bold text-slate-100 mb-1 flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span>Protective Action Taken</span>
                 </div>
+                <p>
+                  VoiceShield real-time defense intercepted the request. The client interface broadcasted an in-call security warning, placed the call on hold, and executed protective termination before sensitive credentials were exchanged.
+                </p>
+              </div>
 
+              {/* Language & Region Context (Objective 12) */}
+              <div className="p-3 bg-slate-900/50 rounded border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                 <div>
-                  <div className="flex justify-between text-2xs mb-1">
-                    <span className="text-slate-400">Identity Risk (Biometric Separation Distance)</span>
-                    <strong className="text-red-400">{incident.riskBreakdown?.identityRisk}%</strong>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-red-500" style={{ width: `${incident.riskBreakdown?.identityRisk}%` }} />
-                  </div>
+                  <span className="text-2xs text-slate-500 uppercase font-semibold block">Warning Language</span>
+                  <span className="font-bold text-slate-200">English (with Regional Support)</span>
                 </div>
-
                 <div>
-                  <div className="flex justify-between text-2xs mb-1">
-                    <span className="text-slate-400">Conversation Risk (Urgency & Fraud Intent)</span>
-                    <strong className="text-amber-400">{incident.riskBreakdown?.conversationRisk}%</strong>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-amber-500" style={{ width: `${incident.riskBreakdown?.conversationRisk}%` }} />
-                  </div>
+                  <span className="text-2xs text-slate-500 uppercase font-semibold block">Region Context</span>
+                  <span className="font-bold text-slate-200">Tamil Nadu (SIM context)</span>
                 </div>
-
-                <div>
-                  <div className="flex justify-between text-2xs mb-1">
-                    <span className="text-slate-400">Contextual Risk (Target Vulnerability & Timing)</span>
-                    <strong className="text-orange-400">{incident.riskBreakdown?.contextualRisk}%</strong>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-orange-500" style={{ width: `${incident.riskBreakdown?.contextualRisk}%` }} />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-2xs mb-1">
-                    <span className="text-slate-500">Transaction Risk (External Core Banking Wire)</span>
-                    <span className="text-slate-500">N/A (Integration Not Configured)</span>
-                  </div>
+                <div className="text-2xs text-slate-400 italic max-w-xs sm:text-right">
+                  *Region context provided for routing assistance only; does not infer authenticity.
                 </div>
               </div>
-            </div>
-
-            {/* Risk Over Time Chart */}
-            <div className="mt-5 pt-4 border-t border-soc-border">
-              <RiskOverTimeChart data={incident.riskOverTime} />
             </div>
           </Card>
 
-          {/* Detection Evidence (Section 9) */}
-          <DetectionEvidenceCard evidence={incident.detectionEvidence} />
+          {/* Card 2: Possible Credential / Financial Exposure & User Intervention Status */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Box A: Possible Exposure */}
+            <Card title="Information Exposure Assessment">
+              <div className="space-y-3 text-xs">
+                {isCredentialOrFinancialExposure ? (
+                  <div className="p-3 rounded bg-red-950/40 border border-red-800 text-red-200 space-y-1.5">
+                    <div className="flex items-center gap-1.5 font-bold text-red-300">
+                      <ShieldAlert className="w-4 h-4 text-red-400" />
+                      <span>POSSIBLE CREDENTIAL EXPOSURE DETECTED</span>
+                    </div>
+                    <p className="text-2xs text-slate-300 leading-relaxed">
+                      Urgent financial transfer or authentication codes were solicited during this call session.
+                    </p>
+                    <div className="text-[11px] text-red-300 font-semibold pt-1">
+                      Immediate employee callback and banking verification advised.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded bg-slate-900 border border-slate-800 text-slate-300">
+                    <span className="text-emerald-400 font-bold">No Confirmed Credential Disclosure</span>
+                    <p className="text-2xs text-slate-400 mt-1">
+                      No passwords, OTPs, or financial secrets confirmed during call dialogue.
+                    </p>
+                  </div>
+                )}
 
-          {/* Identity Biometric Verification (Section 10) */}
-          <IdentityVerificationCard
-            identityDetails={incident.identityDetails}
-            claimedIdentity={incident.claimedIdentity}
-          />
+                <div className="space-y-1">
+                  <span className="text-2xs text-slate-500 uppercase font-semibold block">Solicited Indicators</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(incident.conversationIntelligence?.sensitiveKeywords || ['urgent wire transfer', 'immediate authorization']).map(
+                      (kw, idx) => (
+                        <span
+                          key={idx}
+                          className="px-2 py-0.5 rounded text-2xs bg-slate-800 text-slate-300 border border-slate-700"
+                        >
+                          {kw}
+                        </span>
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Card>
 
-          {/* Conversational Intelligence (Section 11) */}
-          <ConversationIntelligenceCard intelligence={incident.conversationIntelligence} />
+            {/* Box B: User Intervention Status (Objective 9) */}
+            <Card title="User Endpoint Intervention Status">
+              <div className="space-y-3 text-xs">
+                <div className="p-3 rounded bg-blue-950/40 border border-blue-800 text-blue-200">
+                  <span className="text-2xs text-blue-400 font-bold uppercase tracking-wider block">
+                    Current Intervention Event
+                  </span>
+                  <div className="text-sm font-bold text-white mt-1">
+                    {userInterventionStatus}
+                  </div>
+                  <p className="text-2xs text-slate-300 mt-1 leading-relaxed">
+                    Employee received real-time critical warning and automated protective hold sequence before disconnecting.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5 text-2xs text-slate-400">
+                  <div className="flex justify-between py-1 border-b border-slate-800">
+                    <span>Protective Hold Triggered:</span>
+                    <strong className="text-slate-200">Yes (Simulation)</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-800">
+                    <span>Security Announcement Played:</span>
+                    <strong className="text-slate-200">Yes (Simulation)</strong>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span>Call Status:</span>
+                    <strong className="text-red-400">Terminated (Simulation)</strong>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </div>
         </div>
 
-        {/* Right Column: Explainability, Actions & Timeline */}
+        {/* Right Column (4 cols): Limited Actions & Intervention Timeline */}
         <div className="lg:col-span-4 space-y-6">
-          {/* Response Actions (Section 14) */}
-          <Card title="Operational SOC Response Actions">
+          {/* Limited Response Options (Objective 10 & 11) */}
+          <Card title="Operational Response Options">
             <div className="space-y-2.5 font-mono text-xs">
+              {/* Action 1: Contact / Callback User */}
               <Button
                 variant="outline"
                 size="sm"
                 className="w-full justify-start"
-                onClick={handleVerifyIdentityCallback}
+                onClick={handleUserCallback}
                 icon={PhoneCall}
               >
-                Trigger Out-of-Band Callback
+                Contact / Callback User (Simulation)
               </Button>
 
+              {/* Action 2: Conditional Report Financial Fraud */}
+              {isCredentialOrFinancialExposure && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  className="w-full justify-start border-red-700 bg-red-950/70 hover:bg-red-900/80 text-red-200"
+                  onClick={() => setIsFraudModalOpen(true)}
+                  icon={ShieldAlert}
+                >
+                  Report Financial Fraud (1930 NCRP)
+                </Button>
+              )}
+
+              {/* Action 3: Escalate */}
               <Button
                 variant="outline"
-                size="sm"
-                className="w-full justify-start"
-                onClick={handleRequestVerification}
-                icon={ShieldAlert}
-              >
-                Request Endpoint Step-Up MFA
-              </Button>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                className="w-full justify-start"
-                onClick={() => setIsAssignModalOpen(true)}
-                icon={UserCheck}
-              >
-                Reassign Case Specialist
-              </Button>
-
-              <Button
-                variant="danger"
                 size="sm"
                 className="w-full justify-start"
                 onClick={handleEscalate}
                 icon={AlertOctagon}
                 disabled={incident.status === 'ESCALATED'}
               >
-                Escalate to Enterprise CIRT
+                {incident.status === 'ESCALATED' ? 'Escalated to CIRT' : 'Escalate to Enterprise CIRT'}
               </Button>
 
-              <div className="pt-2 border-t border-soc-border space-y-2">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => setIsResolutionModalOpen(true)}
-                  icon={FileCheck2}
-                >
-                  Document Verdict / Resolve Case
-                </Button>
+              {/* Action 4: Resolve */}
+              <Button
+                variant="primary"
+                size="sm"
+                className="w-full justify-start"
+                onClick={() => setIsResolutionModalOpen(true)}
+                icon={FileCheck2}
+              >
+                Resolve Incident & Record Verdict
+              </Button>
 
-                {/* Realism: Mark unavailable enterprise PBX integrations as Coming Soon */}
-                <div className="p-2.5 bg-slate-950/60 border border-dashed border-slate-800 rounded text-2xs text-slate-500">
-                  <div className="font-semibold text-slate-400 mb-0.5">Automated Call Termination:</div>
-                  PSTN/PBX hardware disconnect adapter: <span className="text-amber-400">Request Preventive Action</span> (Coming Soon via SIP trunk connector).
-                </div>
+              <div className="p-2.5 bg-slate-950/60 border border-dashed border-slate-800 rounded text-2xs text-slate-500 mt-2">
+                <span className="font-semibold text-slate-400 block mb-0.5">Response Protocol Notice:</span>
+                All telecom callbacks and external reporting workflows are operated in prototype simulation mode.
               </div>
             </div>
           </Card>
 
-          {/* Explainability (Section 12) */}
-          <ExplainabilityCard explainability={incident.explainability} />
-
-          {/* Chronological Incident Timeline (Section 13) */}
-          <IncidentTimeline timeline={incident.timeline} />
+          {/* Intervention Timeline (Objective 8) */}
+          <IncidentTimeline timeline={interventionTimeline} />
         </div>
       </div>
 
@@ -419,6 +463,16 @@ export function Investigation() {
         incident={incident}
         onAssign={handleAssign}
       />
+
+      {/* Financial Fraud Reporting Modal (Objective 11) */}
+      <FinancialFraudReportModal
+        isOpen={isFraudModalOpen}
+        onClose={() => setIsFraudModalOpen(false)}
+        incident={incident}
+        onComplete={handleFraudReportComplete}
+      />
     </div>
   );
 }
+
+export default Investigation;

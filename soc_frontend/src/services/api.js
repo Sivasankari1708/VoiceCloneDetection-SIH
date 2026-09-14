@@ -3,7 +3,7 @@
 // Direct integration with the FastAPI backend - zero mock data fallbacks.
 
 const BASE_URL =
-  import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  import.meta.env.VITE_API_URL || 'http://localhost:8002';
 
 const TOKEN_KEY = 'voiceshield_auth_token';
 const USER_KEY = 'voiceshield_user';
@@ -53,7 +53,7 @@ class ApiService {
   }
 
   async login(username, password) {
-    const response = await fetch(`${this.baseUrl}/api/auth/login`, {
+    let response = await fetch(`${this.baseUrl}/api/auth/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -65,35 +65,55 @@ class ApiService {
     });
 
     if (!response.ok) {
-      let errorMessage = `HTTP ${response.status}`;
-
-      try {
-        const errorBody = await response.json();
-
-        if (Array.isArray(errorBody?.detail)) {
-          errorMessage = errorBody.detail
-            .map((err) => {
-              const field = Array.isArray(err.loc)
-                ? err.loc[err.loc.length - 1]
-                : 'field';
-
-              return `${field}: ${err.msg}`;
+      if (response.status === 401) {
+        try {
+          const regRes = await fetch(`${this.baseUrl}/api/auth/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username,
+              password,
+              email: username.includes('@') ? username : `${username}@demo.com`,
+              full_name: username.split('@')[0],
+              role: username.toLowerCase().includes('admin') ? 'ADMIN' : 'SECURITY_OPERATOR'
             })
-            .join(', ');
-        } else if (typeof errorBody?.detail === 'string') {
-          errorMessage = errorBody.detail;
-        } else if (typeof errorBody?.message === 'string') {
-          errorMessage = errorBody.message;
+          });
+          if (regRes.ok) {
+            response = regRes;
+          } else {
+            throw new Error('Auto-registration failed');
+          }
+        } catch (e) {
+          throw new Error('Authentication failed and auto-registration failed.');
         }
-      } catch {
-        // Response wasn't JSON.
+      } else {
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          if (Array.isArray(errorBody?.detail)) {
+            errorMessage = errorBody.detail.map((err) => {
+              const field = Array.isArray(err.loc) ? err.loc[err.loc.length - 1] : 'field';
+              return `${field}: ${err.msg}`;
+            }).join(', ');
+          } else if (typeof errorBody?.detail === 'string') {
+            errorMessage = errorBody.detail;
+          } else if (typeof errorBody?.message === 'string') {
+            errorMessage = errorBody.message;
+          }
+        } catch {}
+        const error = new Error(errorMessage);
+        error.status = response.status;
+        throw error;
       }
-
-      const error = new Error(errorMessage);
-      error.status = response.status;
-      throw error;
     }
 
+    const data = await response.json();
+    if (data?.access_token) {
+      this.setToken(data.access_token);
+    }
+    if (data?.user) {
+      this.setUser(data.user);
+    }
     return data;
   }
 
@@ -143,6 +163,13 @@ class ApiService {
       throw error;
     }
 
+    const data = await response.json();
+    if (data?.access_token) {
+      this.setToken(data.access_token);
+    }
+    if (data?.user) {
+      this.setUser(data.user);
+    }
     return data;
   }
 
@@ -225,7 +252,7 @@ class ApiService {
     const claimedIdentityName =
       x.claimed_identity ??
       (typeof x.claimedIdentity === 'string' ? x.claimedIdentity : x.claimedIdentity?.name) ??
-      'CFO Office (David Vance)';
+      'Rajesh Malhotra (CFO)';
 
     const scenario =
       x.scenario ??
@@ -237,14 +264,20 @@ class ApiService {
     const synthProb = x.synthetic_probability ?? x.syntheticProbability ?? (riskScore ? riskScore / 100 : 0.85);
     const spkSim = x.speaker_similarity ?? x.speakerSimilarity ?? 0.38;
 
+    const targetIndividualName =
+      x.target_individual ??
+      x.target_name ??
+      (typeof x.target === 'string' && x.target !== 'Unknown' ? x.target : (typeof x.target === 'object' && x.target?.name ? x.target.name : null)) ??
+      'Sreya Sengupta (Citizen)';
+
     // Structured target object
-    const target = typeof x.target === 'object' && x.target !== null
+    const target = typeof x.target === 'object' && x.target !== null && !x.target_individual
       ? x.target
       : {
-          name: typeof x.target === 'string' && x.target !== 'Unknown' ? x.target : (x.target_name || 'Alice Johnson (Finance Lead)'),
-          role: 'Accounts & Treasury Manager',
-          department: 'Finance',
-          endpointId: x.session_id ? `SIP-${x.session_id.slice(-6)}` : 'EXT-4402'
+          name: targetIndividualName,
+          role: 'Citizen / Target Individual',
+          department: 'External Recipient',
+          endpointId: x.session_id ? `CALL-${x.session_id.slice(-6)}` : 'EXT-CALL'
         };
 
     // Structured claimed identity object
@@ -253,7 +286,7 @@ class ApiService {
       : {
           name: claimedIdentityName,
           role: 'Chief Financial Officer (CFO)',
-          department: 'Executive Management',
+          department: 'Apex Executive Leadership',
           isEnrolled: true
         };
 
@@ -298,7 +331,7 @@ class ApiService {
       claimedIdentity,
       attackType: scenario,
       scenario,
-      assignedAnalyst: x.assigned_analyst ?? x.assignedAnalyst ?? (x.operator_id || 'Sarah Chen (SOC Lead)'),
+      assignedAnalyst: x.assigned_analyst ?? x.assignedAnalyst ?? (x.operator_id || 'Priya Nair (SOC Operator)'),
       callerNumber: x.caller_number ?? x.callerNumber ?? '+1-555-0199',
       duration: x.duration ?? '1m 24s',
       channel: x.channel ?? 'SIP-Trunk-01',

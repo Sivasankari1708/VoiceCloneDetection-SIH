@@ -32,6 +32,8 @@ class AlertDispatcher:
         self._call_sockets: Dict[str, Set[WebSocket]] = {}
         # org_id -> Set of WebSockets (organization security operator dashboards)
         self._org_sockets: Dict[str, Set[WebSocket]] = {}
+        # user_id -> Set of WebSockets (personal recipient feeds)
+        self._user_sockets: Dict[str, Set[WebSocket]] = {}
         self._lock = asyncio.Lock()
 
     @classmethod
@@ -129,3 +131,39 @@ class AlertDispatcher:
             async with self._lock:
                 if org_id in self._org_sockets:
                     self._org_sockets[org_id].difference_update(dead)
+    # -- User Connections (Per-User) ----------
+
+    async def register_user_socket(self, user_id: str, websocket: WebSocket) -> None:
+        async with self._lock:
+            if user_id not in self._user_sockets:
+                self._user_sockets[user_id] = set()
+            self._user_sockets[user_id].add(websocket)
+            log.info("[AlertDispatcher] Registered personal WebSocket for user '%s'.", user_id)
+
+    async def unregister_user_socket(self, user_id: str, websocket: WebSocket) -> None:
+        async with self._lock:
+            if user_id in self._user_sockets:
+                self._user_sockets[user_id].discard(websocket)
+                if not self._user_sockets[user_id]:
+                    del self._user_sockets[user_id]
+            log.info("[AlertDispatcher] Unregistered personal WebSocket for user '%s'.", user_id)
+
+    async def send_to_user(self, user_id: str, message: Dict[str, Any]) -> None:
+        sockets = set()
+        async with self._lock:
+            if user_id in self._user_sockets:
+                sockets = set(self._user_sockets[user_id])
+        if not sockets:
+            return
+        payload = json.dumps(message)
+        dead = set()
+        for ws in sockets:
+            try:
+                await ws.send_text(payload)
+            except Exception as exc:
+                log.debug("[AlertDispatcher] Failed sending to user socket %s: %s", user_id, exc)
+                dead.add(ws)
+        if dead:
+            async with self._lock:
+                if user_id in self._user_sockets:
+                    self._user_sockets[user_id].difference_update(dead)

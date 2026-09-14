@@ -12,6 +12,7 @@ Event Types:
   - INCIDENT_UPDATED
   - SECURITY_ACTION
   - CALL_ENDED
+  - VERIFICATION_EVENT    (Batch 2B — verification workflow)
   - ERROR
 """
 
@@ -31,6 +32,7 @@ class WebSocketEventType(str, Enum):
     INCIDENT_UPDATED = "INCIDENT_UPDATED"
     SECURITY_ACTION = "SECURITY_ACTION"
     CALL_ENDED = "CALL_ENDED"
+    VERIFICATION_EVENT = "VERIFICATION_EVENT"  # Batch 2B
     ERROR = "ERROR"
 
 
@@ -158,4 +160,37 @@ class CallEndedPayload(BaseModel):
     final_verdict: str
     alert_triggered: bool
     accumulated_transcript: str
+    timestamp: str
+
+
+# ---------------------------------------------------------------------------
+# Batch 2B — Verification Event Payload
+# ---------------------------------------------------------------------------
+
+class VerificationEventPayload(BaseModel):
+    """
+    Verification lifecycle event sent to the active call client and SOC.
+
+    verification_type values:
+      - VERIFICATION_REQUIRED   : risk-based policy triggered verification
+      - CHALLENGE_PRESENTED     : challenge phrase was generated and displayed
+      - VERIFICATION_STARTED    : employee initiated the verification workflow
+      - VERIFICATION_COMPLETED  : verification attempt finished — see outcome
+      - INDEPENDENT_VERIFICATION_REQUESTED : employee chose independent verification
+
+    outcome values (when verification_type == VERIFICATION_COMPLETED):
+      - VERIFIED     : caller successfully verified
+      - DEGRADED     : inconclusive — voice/call conditions prevented confident verification
+      - FAILED       : caller could not complete verification
+      - SUSPICIOUS   : verification attempt showed signs of impersonation/replay
+
+    This event contains NO raw ML metrics — only security event context.
+    """
+    session_id: str
+    verification_type: str
+    outcome: Optional[str] = None          # Only present for VERIFICATION_COMPLETED
+    challenge_phrase: Optional[str] = None # Only present for CHALLENGE_PRESENTED
+    method: Optional[str] = None           # active_challenge | trusted_call | mfa | directory
+    triggered_by: Optional[str] = None     # "HIGH_RISK_POLICY" | "USER_INITIATED" | "CRITICAL_POLICY"
+    identity_context: Optional[str] = None # Claimed identity name (no ML scores)
     timestamp: str

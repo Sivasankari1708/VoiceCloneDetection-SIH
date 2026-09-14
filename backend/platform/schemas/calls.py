@@ -18,6 +18,10 @@ class CallStartRequest(BaseModel):
         None,
         description="Claimed speaker identity (e.g. enrolled speaker ID of VIP/CFO) for biometric verification.",
     )
+    recipient_user_id: Optional[str] = Field(
+        None,
+        description="Optional target user ID to send INCOMING_CALL notification to.",
+    )
 
 
 class CallEndRequest(BaseModel):

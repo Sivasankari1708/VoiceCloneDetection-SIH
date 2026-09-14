@@ -261,6 +261,17 @@ class AIAdapter:
         # Get accumulated transcript from session
         accumulated_text = " ".join(session.accumulated_transcript_segments)
 
+        log.info(
+            "[ML] Chunk #%s | Speech=%s | Verdict=%s | SynthProb=%.3f | Transcript='%s' | Intent=%s (conf=%.2f)",
+            chunk_id,
+            result.speech_detected,
+            result.verdict,
+            effective_synth or 0.0,
+            result.transcript or "",
+            result.intent,
+            result.intent_confidence,
+        )
+
         return ProcessedChunkTelemetry(
             session_id=session_id,
             chunk_id=chunk_id,

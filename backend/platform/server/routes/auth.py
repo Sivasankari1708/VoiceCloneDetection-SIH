@@ -101,3 +101,9 @@ def register(req: UserCreateDto, db: Session = Depends(get_db)):
 def get_me(user: User = Depends(get_current_user)):
     """Return currently authenticated user profile."""
     return UserDto(**user.to_dict())
+
+@router.get("/users")
+def get_users(db: Session = Depends(get_db)):
+    """Return list of all registered users (for demo recipient selection)."""
+    users = db.query(User).all()
+    return [UserDto(**u.to_dict()) for u in users]

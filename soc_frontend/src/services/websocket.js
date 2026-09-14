@@ -112,8 +112,55 @@ class TelemetryWebSocketService {
   _normalizeEvent(event) {
     if (!event || typeof event !== 'object') return event;
 
+    const isVerification = event.event === 'VERIFICATION_EVENT' || !!event.verification_type;
+    const isEmployeeAction = event.event === 'SECURITY_ACTION' && event.actor === 'EMPLOYEE';
     const riskScore = Math.round(event.riskScore ?? event.risk_score ?? event.current_risk_score ?? 0);
-    const severity = event.severity ?? this._riskToSeverity(riskScore);
+    let severity = event.severity ?? (isVerification || isEmployeeAction ? 'INFO' : this._riskToSeverity(riskScore));
+
+    let title = event.title ?? event.scenario ?? `Live Alert: Impersonation risk detected (${riskScore})`;
+
+    if (isVerification) {
+      const vtype = event.verification_type ?? event.data?.verification_type;
+      const outcome = event.outcome ?? event.data?.outcome;
+      if (vtype === 'CHALLENGE_PRESENTED' || vtype === 'VERIFICATION_STARTED') {
+        title = `Verification Initiated: ${event.method || event.data?.method || 'Active Challenge'}`;
+      } else if (vtype === 'VERIFICATION_COMPLETED') {
+        if (outcome === 'VERIFIED') {
+          title = 'Identity Verification Completed: Verified';
+          severity = 'LOW';
+        } else if (outcome === 'DEGRADED') {
+          title = 'Verification Degraded — Independent Verification Recommended';
+          severity = 'MEDIUM';
+        } else if (outcome === 'FAILED') {
+          title = 'Identity Verification Failed';
+          severity = 'HIGH';
+        } else if (outcome === 'SUSPICIOUS') {
+          title = 'Verification Suspicious — Elevated Security Concern';
+          severity = 'CRITICAL';
+        } else {
+          title = `Verification Completed: ${outcome || 'Unknown'}`;
+        }
+      } else if (vtype === 'VERIFICATION_REQUIRED') {
+        title = 'Identity Verification Required';
+        severity = 'HIGH';
+      } else if (vtype === 'INDEPENDENT_VERIFICATION_REQUESTED') {
+        title = 'Employee Requested Independent Verification';
+        severity = 'MEDIUM';
+      }
+    } else if (isEmployeeAction) {
+      const actionType = event.action_type ?? '';
+      if (actionType === 'END_CALL') {
+        title = 'Employee Action: Call Ended';
+      } else if (actionType === 'ESCALATE_TO_SOC') {
+        title = 'Employee Action: Escalated to Security Team';
+        severity = 'HIGH';
+      } else if (actionType === 'INDEPENDENT_VERIFICATION') {
+        title = 'Employee Action: Independent Verification Requested';
+        severity = 'MEDIUM';
+      } else {
+        title = `Employee Action: ${actionType.replace(/_/g, ' ')}`;
+      }
+    }
 
     return {
       ...event,
@@ -124,11 +171,11 @@ class TelemetryWebSocketService {
       syntheticProbability: event.syntheticProbability ?? event.synthetic_probability ?? (riskScore ? riskScore / 100 : null),
       claimedIdentity: typeof event.claimedIdentity === 'string'
         ? event.claimedIdentity
-        : (event.claimedIdentity?.name ?? event.claimed_identity ?? 'Protected Identity'),
+        : (event.claimedIdentity?.name ?? event.claimed_identity ?? event.identity_context ?? 'Protected Identity'),
       target: typeof event.target === 'string'
         ? event.target
         : (event.target?.name ?? event.caller_name ?? 'Executive Desk'),
-      title: event.title ?? event.scenario ?? `Live Alert: Impersonation risk detected (${riskScore})`,
+      title,
       channel: event.channel ?? 'SIP-Trunk-01',
       status: event.status ?? (riskScore >= 70 ? 'OPEN' : 'CLEARED'),
       speakerStatus: event.speakerStatus ?? (event.speaker_similarity && event.speaker_similarity < 0.70 ? 'MISMATCH' : 'VERIFIED'),

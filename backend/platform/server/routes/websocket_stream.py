@@ -8,6 +8,7 @@ Real-Time WebSocket streaming endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Optional
 
@@ -113,6 +114,37 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
 
     chunk_counter = 0
 
+    # Dedicated background ML queue and worker task per streaming session:
+    # Completely decouples real-time audio forwarding and transcript broadcasting (< 1ms)
+    # from heavy ML inference and ASR processing (which runs concurrently in worker thread).
+    ml_queue: asyncio.Queue = asyncio.Queue(maxsize=4)
+    worker_db: Session = SessionLocal()
+    worker_orchestrator = SecurityOrchestrator(db=worker_db)
+
+    async def ml_worker_loop():
+        while True:
+            try:
+                item = await ml_queue.get()
+                if item is None:
+                    break
+                c_idx, c_raw = item
+                try:
+                    await worker_orchestrator.process_stream_chunk(
+                        session_id=session_id,
+                        chunk_data=c_raw,
+                        chunk_id=c_idx,
+                    )
+                except Exception as exc:
+                    log.error("[STREAM:ML] Error processing chunk %s for session %s: %s", c_idx, session_id, exc)
+                finally:
+                    ml_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.error("[STREAM:ML] Unexpected worker exception: %s", e)
+
+    ml_worker_task = asyncio.create_task(ml_worker_loop())
+
     try:
         while True:
             # Receive either binary audio bytes or JSON text
@@ -126,8 +158,21 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
                 chunk_counter += 1
                 chunk_idx = chunk_counter
                 log.info("[STREAM] Session '%s' | Received binary audio chunk #%d (%d bytes)", session_id, chunk_idx, len(raw_data))
-                # Forward raw audio chunk to recipient / listening call participants
+                # 1. IMMEDIATELY forward raw audio chunk to recipient / listening call participants (< 1ms)
                 await dispatcher.send_binary_to_call(session_id, raw_data, exclude_socket=websocket)
+
+                # 2. Queue chunk for background ML processing without blocking the receive loop
+                if ml_queue.full():
+                    try:
+                        _ = ml_queue.get_nowait()
+                        ml_queue.task_done()
+                    except (asyncio.QueueEmpty, ValueError):
+                        pass
+                try:
+                    ml_queue.put_nowait((chunk_idx, raw_data))
+                except asyncio.QueueFull:
+                    pass
+
             elif "text" in message and message["text"]:
                 try:
                     payload = json.loads(message["text"])
@@ -167,6 +212,7 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
                                         call.caller_name = f"{claim_res.claimed_person} (Claimed)"
                                     db.commit()
 
+                        # Dispatch transcript IMMEDIATELY to recipient and caller (< 2ms)
                         await dispatcher.send_to_call(
                             session_id,
                             {
@@ -195,32 +241,30 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
                 chunk_counter = max(chunk_counter, chunk_idx)
                 raw_data = payload.get("audio", "")
                 log.info("[STREAM] Session '%s' | Received JSON audio chunk #%d", session_id, chunk_idx)
+                if ml_queue.full():
+                    try:
+                        _ = ml_queue.get_nowait()
+                        ml_queue.task_done()
+                    except (asyncio.QueueEmpty, ValueError):
+                        pass
+                try:
+                    ml_queue.put_nowait((chunk_idx, raw_data))
+                except asyncio.QueueFull:
+                    pass
             else:
                 continue
-
-            # Process chunk through Member 1 pipeline and Security Orchestrator
-            try:
-                log.info("[STREAM] Processing chunk #%d through ML pipeline...", chunk_idx)
-                await orchestrator.process_stream_chunk(
-                    session_id=session_id,
-                    chunk_data=raw_data,
-                    chunk_id=chunk_idx,
-                )
-                log.info("[STREAM] Chunk #%d processed successfully & RISK_UPDATE dispatched", chunk_idx)
-            except Exception as exc:
-                log.error("[STREAM] Error processing chunk %s for session %s: %s", chunk_idx, session_id, exc)
-                await websocket.send_text(
-                    json.dumps({
-                        "event": WebSocketEventType.ERROR,
-                        "data": {"chunk_id": chunk_idx, "error": str(exc)},
-                    })
-                )
 
     except WebSocketDisconnect:
         log.info("[WS:Stream] Client disconnected from session '%s'.", session_id)
     except Exception as exc:
         log.error("[WS:Stream] Unexpected error in session '%s': %s", session_id, exc)
     finally:
+        ml_worker_task.cancel()
+        try:
+            await ml_worker_task
+        except asyncio.CancelledError:
+            pass
+        worker_db.close()
         await dispatcher.unregister_call_socket(session_id, websocket)
         db.close()
 

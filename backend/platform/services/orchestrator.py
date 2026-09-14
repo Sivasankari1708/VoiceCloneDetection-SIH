@@ -15,6 +15,7 @@ Key Invariants:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from datetime import datetime, timezone
@@ -242,8 +243,9 @@ class SecurityOrchestrator:
 
         org_id = call.org_id
 
-        # 1. AI Analysis via Member 1 adapter
-        telemetry: ProcessedChunkTelemetry = self.ai_adapter.process_chunk(
+        # 1. AI Analysis via Member 1 adapter (run in thread to prevent blocking event loop)
+        telemetry: ProcessedChunkTelemetry = await asyncio.to_thread(
+            self.ai_adapter.process_chunk,
             session_id=session_id,
             chunk_data=chunk_data,
             chunk_id=chunk_id,

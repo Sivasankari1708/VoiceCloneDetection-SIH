@@ -507,9 +507,11 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       source.connect(ctx.destination);
 
       const currentTime = ctx.currentTime;
-      // Resynchronize if buffer schedule fell behind or drifted too far ahead
-      if (this.nextPlayTime < currentTime || this.nextPlayTime > currentTime + 1.5) {
-        this.nextPlayTime = currentTime;
+      // Jitter buffer lead time of 60ms ensures smooth hardware buffer scheduling without clicks or missing frames
+      const JITTER_BUFFER = 0.06;
+      // Resynchronize if buffer schedule fell behind or drifted too far ahead (> 1.2s)
+      if (this.nextPlayTime < currentTime || this.nextPlayTime > currentTime + 1.2) {
+        this.nextPlayTime = currentTime + JITTER_BUFFER;
       }
       source.start(this.nextPlayTime);
       this.nextPlayTime += audioBuffer.duration;
@@ -588,7 +590,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       (window as unknown as { _voiceShieldCtx: AudioContext })._voiceShieldCtx = ctx;
 
       const nativeSr = ctx.sampleRate;
-      const targetNativeChunkSize = Math.round(nativeSr * 1.0); // 1.0 second
+      const targetNativeChunkSize = Math.round(nativeSr * 0.4); // 400ms chunks for smooth real-time streaming
 
       processor.onaudioprocess = (e) => {
         if (!this.active || !this.canStreamAudio) return;
@@ -606,12 +608,18 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
           this.rawSampleBuffer.push(inputData[i]);
         }
 
+        // Bound maximum buffer size to 1.5s so stale audio never accumulates
+        const maxBufferSize = Math.round(nativeSr * 1.5);
+        if (this.rawSampleBuffer.length > maxBufferSize) {
+          this.rawSampleBuffer = this.rawSampleBuffer.slice(this.rawSampleBuffer.length - targetNativeChunkSize * 2);
+        }
+
         const now = Date.now();
         if (now - this.lastCallbackLogTime > 1000) {
           this.lastCallbackLogTime = now;
         }
 
-        if (this.rawSampleBuffer.length >= targetNativeChunkSize) {
+        while (this.rawSampleBuffer.length >= targetNativeChunkSize) {
           const rawChunk = this.rawSampleBuffer.splice(0, targetNativeChunkSize);
 
           // 1. Downsample from native rate to 16,000 Hz

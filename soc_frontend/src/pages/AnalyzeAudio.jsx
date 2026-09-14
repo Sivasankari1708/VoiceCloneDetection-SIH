@@ -160,7 +160,7 @@ export function AnalyzeAudio() {
                 ['SileroVAD', 'Voice activity detection & segmentation'],
                 ['DeepfakeCNN v2', 'Acoustic spectral deepfake classification'],
                 ['ECAPA-TDNN', '192-D speaker embedding & biometric comparison'],
-                ['Faster-Whisper', 'Speech-to-text transcription (int8 CPU)'],
+                ['Google Cloud STT', 'Real-time streaming speech-to-text (gRPC)'],
                 ['IntentDetector', 'Social engineering & fraud intent scoring'],
                 ['RiskEngine', 'Multi-factor risk synthesis & decision'],
               ].map(([name, desc]) => (
@@ -268,7 +268,7 @@ export function AnalyzeAudio() {
 
               {/* Transcript */}
               {inf.transcript && (
-                <Card title="Speech Transcript (Whisper ASR)">
+                <Card title="Speech Transcript (Google Cloud STT)">
                   <p className="text-xs text-slate-300 bg-slate-900/60 border border-slate-800 rounded p-3 leading-relaxed italic">
                     "{inf.transcript}"
                   </p>

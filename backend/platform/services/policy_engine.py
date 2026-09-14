@@ -59,6 +59,21 @@ class PolicyEngine:
           2. Social Engineering:
              Sensitive intent (OTP extraction, wire transfer) -> strengthens severity.
         """
+        # ── 0. Silence Gating: During silence, omit risk scoring and return baseline SAFE ──
+        if not telemetry.speech_detected:
+            return PolicyEvaluationResult(
+                risk_score=0.0,
+                risk_level="SAFE",
+                recommended_action="MONITOR",
+                scenario="NON_SPEECH_OR_INCONCLUSIVE",
+                reasons=["Listening for caller speech..."],
+                should_warn_user=False,
+                should_alert_org=False,
+                should_create_incident=False,
+                is_blocked=False,
+                warning_message=None,
+            )
+
         base_decision = telemetry.risk_decision
         risk_score = float(base_decision.risk_score)
         risk_level = str(base_decision.risk_level)
@@ -66,11 +81,20 @@ class PolicyEngine:
         scenario = str(base_decision.scenario)
         reasons = list(base_decision.reasons)
 
-        # ── 1. Fast Alert Escalation from Member 1 ─────────────────────────
-        if telemetry.is_alert:
-            risk_score = max(risk_score, 90.0)
-            risk_level = "CRITICAL"
-            recommended_action = "BLOCK_OR_ESCALATE"
+        # ── 1. Fast Alert Escalation ───────────────────────────────────────
+        # When synthetic voice is detected, risk scales appropriately:
+        # If accompanied by sensitive intent or protected identity, escalates to CRITICAL (>=90).
+        # Otherwise flags as HIGH risk requiring speaker verification.
+        if telemetry.is_alert and telemetry.speech_detected:
+            if protected_identity or telemetry.intent in SENSITIVE_INTENTS:
+                risk_score = max(risk_score, 90.0)
+                risk_level = "CRITICAL"
+                recommended_action = "BLOCK_OR_ESCALATE"
+            else:
+                risk_score = max(risk_score, 70.0)
+                risk_level = "HIGH"
+                recommended_action = "REQUIRE_ADDITIONAL_VERIFICATION"
+
             if telemetry.alert_reason and telemetry.alert_reason not in reasons:
                 reasons.insert(0, telemetry.alert_reason)
 

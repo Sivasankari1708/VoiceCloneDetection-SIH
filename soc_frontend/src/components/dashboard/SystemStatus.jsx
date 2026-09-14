@@ -8,7 +8,7 @@ export function SystemStatus({ services = [] }) {
   const displayServices = services.length > 0 ? services : [
     { name: 'Voice Detection', subtext: 'Deepfake CNN v2', status: 'OPERATIONAL', latency: '38 ms' },
     { name: 'Speaker Verification', subtext: 'ECAPA-TDNN (192-D)', status: 'OPERATIONAL', latency: '42 ms' },
-    { name: 'ASR Engine', subtext: 'faster-whisper', status: 'OPERATIONAL', latency: '65 ms' },
+    { name: 'ASR Engine', subtext: 'Google Cloud STT', status: 'OPERATIONAL', latency: '65 ms' },
     { name: 'Risk Decision Engine', subtext: 'Security Matrix', status: 'OPERATIONAL', latency: '12 ms' },
     { name: 'Database Engine', subtext: 'Platform DB', status: 'OPERATIONAL', latency: '16 ms' },
   ];

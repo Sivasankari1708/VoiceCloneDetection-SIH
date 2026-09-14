@@ -97,7 +97,7 @@ export function SystemHealth() {
                     {svc.subtext || (
                       svc.id === 'voice_detection' ? 'Spectrogram CNN Feature Classification' :
                       svc.id === 'speaker_verifier' ? 'ECAPA-TDNN 192-D Cosine Metric' :
-                      svc.id === 'whisper_asr' ? 'CTranslate2 Automatic Speech Recognition' :
+                      (svc.id === 'asr_engine' || svc.id === 'whisper_asr') ? 'Google Cloud Speech-to-Text (gRPC Streaming)' :
                       svc.id === 'intent_detector' ? 'Conversational Intent & Social Engineering Risk' :
                       svc.id === 'risk_engine' ? 'Risk Score & Mitigation Synthesizer' :
                       svc.id === 'database' ? 'SQLite / PostgreSQL Sync' : 'Active Pipeline Service'

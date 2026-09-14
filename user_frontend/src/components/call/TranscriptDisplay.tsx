@@ -5,27 +5,33 @@ interface TranscriptDisplayProps {
   segments: TranscriptSegment[];
   maxHeight?: string;
   className?: string;
+  perspective?: 'employee' | 'caller';
 }
 
-const TranscriptSegmentRow = React.memo(({ seg }: { seg: TranscriptSegment }) => {
-  const isCaller = seg.speaker === 'caller';
-  return (
-    <div className={`transition-opacity duration-200 ${isCaller ? '' : 'flex justify-end'}`}>
-      <div className={`max-w-[85%] ${isCaller ? '' : 'text-right'}`}>
-        <span className={`text-xs font-medium block mb-0.5 ${isCaller ? 'text-slate-500' : 'text-blue-500'}`}>
-          {isCaller ? 'Caller' : 'You'}
-        </span>
-        <div
-          className={`text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 inline-block shadow-xs leading-relaxed ${
-            seg.isPartial ? 'opacity-60 italic' : ''
-          }`}
-        >
-          &ldquo;{seg.text}&rdquo;
+const TranscriptSegmentRow = React.memo(
+  ({ seg, perspective = 'employee' }: { seg: TranscriptSegment; perspective?: 'employee' | 'caller' }) => {
+    const isMe = perspective === 'employee' ? seg.speaker === 'employee' : seg.speaker === 'caller';
+    const label = isMe ? 'You' : seg.speaker === 'caller' ? 'Inbound Caller' : 'Target Employee';
+    return (
+      <div className={`transition-opacity duration-200 ${isMe ? 'flex justify-end' : ''}`}>
+        <div className={`max-w-[85%] ${isMe ? 'text-right' : ''}`}>
+          <span className={`text-xs font-medium block mb-0.5 ${isMe ? 'text-blue-400 font-semibold' : 'text-slate-400'}`}>
+            {label}
+          </span>
+          <div
+            className={`text-sm rounded-lg px-3 py-2 inline-block shadow-xs leading-relaxed ${
+              isMe
+                ? 'bg-blue-600 text-white border border-blue-500'
+                : 'bg-slate-800 text-slate-100 border border-slate-700'
+            } ${seg.isPartial ? 'opacity-70 italic' : ''}`}
+          >
+            {seg.text}
+          </div>
         </div>
       </div>
-    </div>
-  );
-});
+    );
+  }
+);
 
 TranscriptSegmentRow.displayName = 'TranscriptSegmentRow';
 
@@ -33,6 +39,7 @@ export default function TranscriptDisplay({
   segments,
   maxHeight = '240px',
   className = '',
+  perspective = 'employee',
 }: TranscriptDisplayProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -61,10 +68,14 @@ export default function TranscriptDisplay({
   if (segments.length === 0) {
     return (
       <div
-        className={`flex items-center justify-center text-slate-400 text-sm italic py-6 ${className}`}
-        style={{ minHeight: '80px' }}
+        className={`flex flex-col items-center justify-center text-slate-400 text-xs py-6 space-y-1.5 ${className}`}
+        style={{ minHeight: '90px' }}
       >
-        Waiting for speech in call…
+        <div className="flex items-center gap-2 text-slate-400">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+          <span className="font-semibold text-slate-300">Google Speech Recognition Ready</span>
+        </div>
+        <span className="italic text-slate-500 text-center">Listening to live audio... Speak into microphone to generate transcript.</span>
       </div>
     );
   }
@@ -80,7 +91,7 @@ export default function TranscriptDisplay({
       aria-label="Live conversation transcript"
     >
       {segments.map((seg) => (
-        <TranscriptSegmentRow key={seg.id} seg={seg} />
+        <TranscriptSegmentRow key={seg.id} seg={seg} perspective={perspective} />
       ))}
     </div>
   );

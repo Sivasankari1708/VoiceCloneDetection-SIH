@@ -271,6 +271,8 @@ export interface BackendRiskUpdate {
   speaker_match?: boolean;
   transcript: string;              // this chunk only
   accumulated_transcript: string;
+  is_final?: boolean;
+  speaker?: string;
   intent: string;                  // "PAYMENT_TRANSFER"|"OTP_REQUEST"|"CREDENTIAL_REQUEST"|"URGENT_REQUEST"|"NORMAL_CONVERSATION"
   intent_confidence: number;
   context_signals: string[];

@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { ShieldAlert, XCircle, Lock, Home, User, PhoneOff } from 'lucide-react';
+import { ShieldAlert, XCircle, Lock, Home, PhoneOff } from 'lucide-react';
 import { useActiveCall, useCallHistory } from '../context/AppContext';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
@@ -97,7 +97,7 @@ export default function SecurityAlertPage() {
           <div>
             <div className="font-semibold text-amber-900 text-sm mb-1">Recommended action</div>
             <p className="text-sm text-amber-800">
-              Do not share OTPs, passwords, or financial information. Verify the caller through a trusted channel before taking any action.
+              Do not share OTPs, passwords, or financial information. You cannot verify callers claiming to be from government or protected organisations directly — hang up and wait until the incident is investigated and resolved by the organisation.
             </p>
           </div>
         </div>
@@ -105,16 +105,16 @@ export default function SecurityAlertPage() {
 
       {/* Security team notification */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-        <div className="font-semibold text-blue-900 text-sm">✓ Your security team (SOC) has been notified.</div>
-        <div className="text-xs text-blue-600 mt-1 font-mono">
-          Incident reference: <span className="font-bold">{refId}</span>
+        <div className="font-semibold text-blue-900 text-sm">✓ Organization Security Operations Center (SOC) notified.</div>
+        <div className="text-xs text-blue-700 mt-1 font-mono">
+          Incident reference: <span className="font-bold">{refId}</span> • Status: <span className="font-semibold text-amber-800">Awaiting Organisation Resolution</span>
         </div>
       </div>
 
       {/* Actions */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <Button variant="primary" fullWidth onClick={() => navigate('/verification')} icon={<User size={16} />}>
-          Verify Caller
+        <Button variant="primary" fullWidth onClick={() => navigate('/verification')} icon={<ShieldAlert size={16} />}>
+          View Organisation Incident Notice
         </Button>
         <Button variant="danger" fullWidth onClick={() => navigate('/live')} icon={<PhoneOff size={16} />}>
           Return to Call

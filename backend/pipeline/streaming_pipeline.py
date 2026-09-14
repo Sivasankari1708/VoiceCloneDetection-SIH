@@ -57,7 +57,8 @@ from backend.models.deepfake_v2 import DeepfakeV2Detector, DeepfakeV2Result
 from backend.models.speaker_enrollment import SpeakerEnrollmentService
 from backend.models.speaker_repository import BaseSpeakerRepository
 from backend.models.speaker_verifier import SpeakerResult, SpeakerVerifier
-from backend.models.whisper_asr import ASRResult, WhisperASR
+from backend.models.asr_base import ASRResult, BaseASR
+
 from backend.pipeline.inference_pipeline import (
     InferencePipeline,
     get_default_pipeline,
@@ -125,6 +126,7 @@ class StreamingInferenceResult(InferenceResult):
     is_alert: bool = False
     alert_reason: Optional[str] = None
     chunk_duration_ms: float = 1000.0
+    is_final: bool = True
 
 
 @dataclass
@@ -322,11 +324,17 @@ class StreamingSession:
             elif self.smoothed_speaker_sims:
                 smoothed_sim = self.smoothed_speaker_sims[-1]
 
-            # Retain existing session-level alert if previously triggered
-            if self.alert_triggered:
+            # Only trigger alert if this speech chunk or smoothed value exceeds fast alert threshold
+            if raw_synthetic_prob is None:
+                is_alert = False
+                alert_reason = None
+            elif raw_synthetic_prob >= fast_threshold or (smoothed_synth is not None and smoothed_synth >= fast_threshold):
                 is_alert = True
                 if alert_reason is None:
-                    alert_reason = self.alert_reason
+                    alert_reason = self.alert_reason or (
+                        f"CRITICAL: High confidence synthetic voice detected "
+                        f"(prob={raw_synthetic_prob:.3f} >= {fast_threshold:.2f})"
+                    )
 
             return smoothed_synth, smoothed_sim, rtf, is_alert, alert_reason
 
@@ -397,8 +405,8 @@ class StreamingSession:
                     new_chunk = " ".join(new_tokens).strip()
                 else:
                     cur_str = " ".join(cur_words)
-                    ex_str = " ".join(ex_words)
-                    if cur_str and cur_str in ex_str:
+                    tail_str = " ".join(tail_ex)
+                    if cur_str and cur_str in tail_str:
                         new_chunk = ""
                     else:
                         # 3. Fuzzy overlap: check if current window words are almost entirely (>= 75%)
@@ -530,6 +538,12 @@ class StreamingAudioPipeline:
                 config=self.config,
             )
             self._sessions[session_id] = session
+            asr_prov = getattr(self.pipeline, "asr_provider", None)
+            if asr_prov is not None:
+                try:
+                    asr_prov.start_stream(session_id)
+                except Exception as exc:
+                    log.warning("[StreamingPipeline] Failed to start ASR stream for session '%s': %s", session_id, exc)
             log.info(
                 "[StreamingPipeline] Started session '%s' (speaker='%s', ref_emb=%s)",
                 session_id,
@@ -555,6 +569,14 @@ class StreamingAudioPipeline:
             return SessionSummary(session_id=session_id)
 
         session.is_active = False
+        asr_prov = getattr(self.pipeline, "asr_provider", None)
+        if asr_prov is not None:
+            try:
+                final_asr = asr_prov.end_stream(session_id)
+                if final_asr.transcript and final_asr.transcript not in session.accumulated_transcript_segments:
+                    session.accumulated_transcript_segments.append(final_asr.transcript)
+            except Exception as exc:
+                log.warning("[StreamingPipeline] Failed to end ASR stream for session '%s': %s", session_id, exc)
         summary = session.get_summary()
         log.info(
             "[StreamingPipeline] Ended session '%s' | Chunks=%d | Audio=%.1fs | Speech=%.1fs | "
@@ -734,8 +756,15 @@ class StreamingAudioPipeline:
             speech_probability=vad_res.speech_probability,
         )
 
-        # Early exit on silence (bypasses Deepfake, ECAPA-TDNN, Whisper)
-        if not vad_res.speech_detected or vad_res.speech_ratio <= 0.0 or len(chunk_waveform) == 0:
+        # Early exit on silence (bypasses Deepfake, ECAPA-TDNN, ASR)
+        # Treat as silence if VAD detects no speech, or if total speech duration is less than 150ms (transient pop/noise)
+        is_silence = (
+            not vad_res.speech_detected
+            or vad_res.speech_ratio < 0.10
+            or vad_res.total_speech_sec < 0.15
+            or len(chunk_waveform) == 0
+        )
+        if is_silence:
             total_elapsed = (time.perf_counter() - t_start) * 1000.0
             timings["total_pipeline_ms"] = total_elapsed
 
@@ -751,6 +780,9 @@ class StreamingAudioPipeline:
                 latency_ms=total_elapsed,
                 chunk_duration_ms=chunk_duration_ms,
             )
+            # Silence chunks must never trigger an active alert
+            is_alert = False
+            alert_reason = None
 
             log.debug(
                 "[StreamingPipeline] Chunk %s:%s is silence (VAD ratio=%.2f). Early exiting in %.1f ms.",
@@ -834,24 +866,32 @@ class StreamingAudioPipeline:
             )
         timings["speaker_verifier_ms"] = (time.perf_counter() - t0) * 1000.0
 
-        # ── 7. faster-whisper Speech-to-Text on Rolling Audio Context ───────────────
+        # ── 7. Speech-to-Text (Google Cloud Speech-to-Text Streaming) ────────
         t0 = time.perf_counter()
-        # Use rolling audio buffer (up to 3.0s = 48,000 samples) so Whisper has full acoustic context
-        # without cutting phonemes at 1.0s boundaries
-        rolling_buf = session.get_audio_buffer()
-        if len(rolling_buf) > 48000:
-            asr_input = rolling_buf[-48000:]
-        elif len(rolling_buf) >= len(chunk_waveform):
-            asr_input = rolling_buf
+        asr_provider = getattr(self.pipeline, "asr_provider", None)
+
+        if asr_provider is not None:
+            # Google STT streaming: send incremental 1-second chunk frame
+            asr_res: ASRResult = asr_provider.send_audio(
+                session_id=session_id,
+                audio_chunk=chunk_waveform,
+                is_speech=vad_res.speech_detected,
+            )
+            raw_asr_text = asr_res.transcript.strip()
+            if asr_res.is_final and raw_asr_text:
+                chunk_text = raw_asr_text
+                session.append_transcript(raw_asr_text)
+            else:
+                chunk_text = raw_asr_text
+            accumulated_text = session.get_accumulated_transcript()
         else:
-            asr_input = chunk_waveform
+            asr_res = ASRResult(transcript="", detected_language="en-IN", provider="google")
+            chunk_text = ""
+            accumulated_text = session.get_accumulated_transcript()
 
-        asr_res: ASRResult = self.pipeline.whisper_asr.transcribe(asr_input, vad_filter=False)
-        timings["whisper_asr_ms"] = (time.perf_counter() - t0) * 1000.0
-
-        raw_asr_text = asr_res.transcript.strip()
-        chunk_text = session.append_incremental_transcript(raw_asr_text)
-        accumulated_text = session.get_accumulated_transcript()
+        elapsed_asr = (time.perf_counter() - t0) * 1000.0
+        timings["asr_ms"] = elapsed_asr
+        timings["whisper_asr_ms"] = elapsed_asr  # Backward compatibility alias
 
         schema_asr = TranscriptionResult(
             text=chunk_text,
@@ -860,10 +900,15 @@ class StreamingAudioPipeline:
             num_segments=len(asr_res.segments),
         )
 
-        # ── 8. Intent Detection on Accumulated Transcript ───────────────────
+        # ── 8. Intent Detection on Live Transcript ─────────────────────────
         t0 = time.perf_counter()
-        if accumulated_text:
-            intent_res: IntentResult = self.pipeline.intent_detector.detect(accumulated_text)
+        active_full_text = (
+            f"{accumulated_text} {raw_asr_text}".strip()
+            if raw_asr_text and not asr_res.is_final
+            else (accumulated_text or raw_asr_text)
+        )
+        if active_full_text:
+            intent_res: IntentResult = self.pipeline.intent_detector.detect(active_full_text)
             intent_str = intent_res.intent
             intent_conf = intent_res.intent_confidence
             matched_ind = intent_res.matched_indicators
@@ -968,4 +1013,5 @@ class StreamingAudioPipeline:
             is_alert=is_alert,
             alert_reason=alert_reason,
             chunk_duration_ms=chunk_duration_ms,
+            is_final=bool(asr_res.is_final) if asr_provider is not None else True,
         )

@@ -87,9 +87,11 @@ def test_websocket_stream_chunk_and_risk_update(ws_client, monkeypatch):
         raw_pcm = np.zeros(16000, dtype=np.int16).tobytes()
         ws.send_bytes(raw_pcm)
 
-        # Receive RISK_UPDATE message
+        # Receive RISK_UPDATE message (consume initial CALL_ACCEPTED if present)
         msg_text = ws.receive_text()
         msg = json.loads(msg_text)
+        if msg.get("event") == WebSocketEventType.CALL_ACCEPTED:
+            msg = json.loads(ws.receive_text())
 
         assert msg["event"] == WebSocketEventType.RISK_UPDATE
         data = msg["data"]
@@ -168,8 +170,10 @@ def test_websocket_dual_alert_on_critical_voice_clone(ws_client, monkeypatch):
             # Send chunk
             call_ws.send_bytes(np.zeros(16000, dtype=np.int16).tobytes())
 
-            # 1. User call socket should receive USER_SECURITY_ALERT
+            # 1. User call socket should receive USER_SECURITY_ALERT (after initial CALL_ACCEPTED)
             user_msg = json.loads(call_ws.receive_text())
+            if user_msg.get("event") == WebSocketEventType.CALL_ACCEPTED:
+                user_msg = json.loads(call_ws.receive_text())
             assert user_msg["event"] == WebSocketEventType.USER_SECURITY_ALERT
             assert user_msg["data"]["severity"] == "CRITICAL"
             assert "WARNING" in user_msg["data"]["warning_message"]

@@ -143,7 +143,11 @@ export function mapBackendRiskUpdate(
   update: BackendRiskUpdate,
   callStartTime: Date,
   existingTranscript: TranscriptSegment[]
-): { security: Partial<SecurityStatus>; transcriptSegment: TranscriptSegment | null } {
+): {
+  security: Partial<SecurityStatus>;
+  transcriptSegment: TranscriptSegment | null;
+  fullTranscript?: TranscriptSegment[];
+} {
   const severity = mapRiskLevel(update.risk_level);
   const identityStatus = mapIdentityStatus(update.identity_status);
   const voiceAuthenticity = mapVerdict(update.verdict);
@@ -151,7 +155,7 @@ export function mapBackendRiskUpdate(
 
   // Build signals: primary intent + context signals (deduplicated)
   const signals: ConversationSignal[] = [];
-  if (update.intent && update.intent !== 'NORMAL_CONVERSATION') {
+  if (update.intent && update.intent !== 'NORMAL_CONVERSATION' && update.intent !== 'UNKNOWN') {
     signals.push(mapIntent(update.intent));
   }
   mapContextSignals(update.context_signals ?? []).forEach(s => {
@@ -165,35 +169,79 @@ export function mapBackendRiskUpdate(
     callerIdentity: identityStatus,
     signals,
     recommendation,
-    message: scoreToSecurityMessage(update.risk_score),
+    message: !update.speech_detected ? 'Listening for speech...' : scoreToSecurityMessage(update.risk_score),
     securityTeamNotified: update.is_alert,
     syntheticProbability: update.synthetic_probability ?? update.smoothed_synthetic_probability,
     speakerSimilarity: update.speaker_similarity ?? update.smoothed_speaker_similarity,
     speakerMatch: update.speaker_match,
     intent: update.intent || (signals[0]?.label ?? 'NORMAL_CONVERSATION'),
     identityStatusText: update.identity_status,
-    action: update.recommended_action || (severity === 'CRITICAL' ? 'BLOCK / VERIFY' : severity === 'HIGH' ? 'VERIFY' : 'MONITOR'),
+    action: !update.speech_detected || update.risk_score === 0
+      ? 'MONITOR'
+      : (update.recommended_action || (severity === 'CRITICAL' ? 'BLOCK / VERIFY' : severity === 'HIGH' ? 'VERIFY' : 'MONITOR')),
   };
 
-  // Append transcript when there is actual new text
+  // ── Robust Progressive Streaming Transcript Ingestion ──────────────
+  // Invariant 1: In-progress speech (is_final === false) updates active partial segment in-place.
+  // Invariant 2: Committed speech (is_final === true) is frozen permanently and NEVER mutated.
+  const chunkText = update.transcript?.trim() || '';
+  const isFinal = update.is_final !== false;
+  let fullTranscript: TranscriptSegment[] | undefined = undefined;
   let transcriptSegment: TranscriptSegment | null = null;
-  const chunkText = update.transcript?.trim();
+
+  const finalized = existingTranscript.filter(t => !t.isPartial);
+  const activePartial = existingTranscript.find(t => t.isPartial);
+
+  const segmentSpeaker: 'caller' | 'employee' =
+    update.speaker === 'employee' || update.speaker === 'user' ? 'employee' : 'caller';
+
   if (chunkText) {
-    const lastSeg = existingTranscript[existingTranscript.length - 1];
-    const isExactRepeatOfLast = lastSeg && lastSeg.text.trim() === chunkText && (Date.now() - callStartTime.getTime() - lastSeg.timestamp < 1200);
-    const idExists = existingTranscript.some(t => t.id === `seg-${update.chunk_id}`);
-    if (!isExactRepeatOfLast && !idExists) {
-      transcriptSegment = {
-        id: `seg-${update.chunk_id}`,
-        speaker: 'caller',
+    if (!isFinal) {
+      // Progressive interim hypothesis: update active partial segment in-place
+      const hasMatchingPartial = activePartial && activePartial.speaker === segmentSpeaker;
+      const liveSeg: TranscriptSegment = {
+        id: hasMatchingPartial ? activePartial.id : `seg-live-${Date.now()}`,
+        speaker: segmentSpeaker,
         text: chunkText,
-        timestamp: Math.max(0, Date.now() - callStartTime.getTime()),
-        isPartial: false,
+        timestamp: hasMatchingPartial ? activePartial.timestamp : Math.max(0, Date.now() - callStartTime.getTime()),
+        isPartial: true,
       };
+      // If previous partial was from the other speaker, commit it
+      const baseFinalized = activePartial && activePartial.speaker !== segmentSpeaker && activePartial.text.trim()
+        ? [...finalized, { ...activePartial, isPartial: false }]
+        : finalized;
+      fullTranscript = [...baseFinalized, liveSeg];
+      transcriptSegment = liveSeg;
+    } else {
+      // Committed boundary reached: freeze finalized segment into history
+      const lastFinal = finalized[finalized.length - 1];
+      if (!lastFinal || lastFinal.text.trim().toLowerCase() !== chunkText.toLowerCase() || lastFinal.speaker !== segmentSpeaker) {
+        const finalSeg: TranscriptSegment = {
+          id: `seg-${update.chunk_id}-${Date.now()}`,
+          speaker: segmentSpeaker,
+          text: chunkText,
+          timestamp: activePartial?.timestamp ?? Math.max(0, Date.now() - callStartTime.getTime()),
+          isPartial: false,
+        };
+        finalized.push(finalSeg);
+        transcriptSegment = finalSeg;
+      }
+      fullTranscript = [...finalized];
     }
+  } else if (update.accumulated_transcript?.trim() && existingTranscript.length === 0) {
+    // Initial call connection state replay
+    const initSeg: TranscriptSegment = {
+      id: `seg-init-${update.chunk_id || 0}`,
+      speaker: segmentSpeaker,
+      text: update.accumulated_transcript.trim(),
+      timestamp: 0,
+      isPartial: false,
+    };
+    fullTranscript = [initSeg];
+    transcriptSegment = initSeg;
   }
 
-  return { security, transcriptSegment };
+  return { security, transcriptSegment, fullTranscript };
 }
 
 // ─── Severity Human Labels ───────────────────────────────────

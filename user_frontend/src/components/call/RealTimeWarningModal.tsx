@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, ShieldAlert, PhoneOff, UserCheck, X } from 'lucide-react';
+import { AlertTriangle, ShieldAlert, PhoneOff, X } from 'lucide-react';
 import type { SeverityLevel } from '../../types';
 import Button from '../ui/Button';
 
@@ -79,15 +79,22 @@ export const RealTimeWarningModal: React.FC<RealTimeWarningModalProps> = ({
 
           <div
             id="warning-modal-desc"
-            className="mt-4 p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2"
+            className="mt-4 p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5"
           >
-            <p className="text-sm font-semibold text-rose-300">
-              Caller is fraudulently claiming to be an enrolled executive using a synthetic voice clone. Do not share OTP, passwords, or approve payments.
+            <p className="text-sm font-semibold text-rose-300 leading-snug">
+              Caller is suspected of AI voice clone impersonation. Do not share OTPs, passwords, or approve financial transfers.
             </p>
-            <p className="text-xs text-slate-300">
+            <p className="text-xs text-slate-300 leading-relaxed">
               {message ||
-                'Voice biometric analysis detected synthetic acoustic artifacts consistent with an AI voice clone. Immediate verification recommended.'}
+                'Voice biometric analysis detected synthetic acoustic artifacts consistent with an AI voice clone.'}
             </p>
+
+            {/* Government / Organisation Policy Notice */}
+            <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-900/60 text-[11px] text-rose-200/90 leading-relaxed">
+              <span className="font-bold text-rose-300 block mb-0.5">⚠️ Organisation Verification Policy:</span>
+              Citizens cannot directly request verification from a government organisation or public authority. An official Security Incident has been escalated to the organisation&apos;s SOC. Please hang up and wait until the incident is resolved by the organisation.
+            </div>
+
             <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-xs">
               <span className="text-slate-400">Current AI Risk Score:</span>
               <span className="font-mono font-bold text-rose-400 text-sm">
@@ -96,22 +103,22 @@ export const RealTimeWarningModal: React.FC<RealTimeWarningModalProps> = ({
             </div>
           </div>
 
-          <div className="mt-6 flex flex-col sm:flex-row gap-3">
-            <Button
-              variant="primary"
-              className="flex-1 bg-blue-600 hover:bg-blue-500 py-2.5"
-              icon={<UserCheck size={16} />}
-              onClick={onVerify}
-            >
-              Verify Caller Independently
-            </Button>
+          <div className="mt-5 flex flex-col gap-2.5">
             <Button
               variant="danger"
-              className="flex-1 py-2.5"
-              icon={<PhoneOff size={16} />}
+              className="w-full py-3 text-sm font-bold bg-rose-600 hover:bg-rose-500 shadow-lg shadow-rose-950/60 flex items-center justify-center gap-2"
+              icon={<PhoneOff size={17} />}
               onClick={onHangUp}
             >
               Hang Up Immediately
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full py-2 text-xs border-slate-700 bg-slate-800/60 hover:bg-slate-800 text-slate-200 flex items-center justify-center gap-1.5"
+              icon={<ShieldAlert size={14} className="text-amber-400" />}
+              onClick={onVerify}
+            >
+              View Organisation Incident Notice
             </Button>
           </div>
           

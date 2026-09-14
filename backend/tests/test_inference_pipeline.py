@@ -26,8 +26,9 @@ import numpy as np
 import pytest
 
 from backend.audio.preprocessing import preprocess_audio
+from backend.models.asr_base import ASRResult
 from backend.models.speaker_verifier import SpeakerVerifier
-from backend.pipeline.inference_pipeline import InferencePipeline, process_audio
+from backend.pipeline.inference_pipeline import InferencePipeline, get_default_pipeline, process_audio
 from backend.schemas.inference_result import InferenceResult
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -37,8 +38,22 @@ SR = 16_000
 
 @pytest.fixture(scope="session")
 def pipeline() -> InferencePipeline:
-    """Initialize unified pipeline once for the entire test session."""
-    return InferencePipeline()
+    """Initialize unified pipeline once for the entire test session with mocked STT for offline test execution."""
+    p = get_default_pipeline()
+
+    def mock_transcribe(audio, **kwargs):
+        if audio is None or len(audio) == 0:
+            return ASRResult(transcript="", detected_language="en-IN", provider="google", is_final=True)
+        return ASRResult(
+            transcript="Hello, I need to verify my account credentials immediately.",
+            detected_language="en-IN",
+            language_probability=0.95,
+            provider="google",
+            is_final=True,
+        )
+
+    p.asr.transcribe = mock_transcribe
+    return p
 
 
 @pytest.fixture(scope="session")
@@ -225,7 +240,7 @@ def test_case_5_synthetic_deepfake_audio(
 # Pipeline Singleton & Input Formats
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_process_audio_module_level_function():
+def test_process_audio_module_level_function(pipeline: InferencePipeline):
     """Module-level process_audio() convenience function uses shared pipeline."""
     audio_path = SAMPLES_DIR / "genuine" / "speaker_a_test.wav"
     res = process_audio(

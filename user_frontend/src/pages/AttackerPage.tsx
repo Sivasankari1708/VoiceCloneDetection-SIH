@@ -17,8 +17,9 @@ import { authService } from '../services/auth/authService';
 import { useAuth } from '../context/AppContext';
 import { WebSocketLiveCallStreamImpl } from '../services/calls/webSocketLiveCallStream';
 import { userSocketService } from '../services/calls/userSocketService';
-import type { CallEvent } from '../types';
+import type { CallEvent, TranscriptSegment } from '../types';
 import LiveVoiceWaveform from '../components/waveform/LiveVoiceWaveform';
+import TranscriptDisplay from '../components/call/TranscriptDisplay';
 
 interface BackendUserSummary {
   id: string;
@@ -89,7 +90,7 @@ export default function AttackerPage() {
   const [selectedRecipientId, setSelectedRecipientId] = useState<string>('user_sreya_001');
 
   // 2. Audio Source Selection (Input source only — never determines classification)
-  const [audioSourceType, setAudioSourceType] = useState<'mic' | 'file'>('mic');
+  const [audioSourceType, setAudioSourceType] = useState<'mic' | 'file'>('file');
   const [selectedSampleId, setSelectedSampleId] = useState<string>('sample_wire_transfer');
 
   // 3. Call Lifecycle: 'idle' | 'ringing' | 'active' | 'ended' | 'error'
@@ -100,7 +101,7 @@ export default function AttackerPage() {
 
   // Live Transmission Status Feedback
   const [statusNote, setStatusNote] = useState('Ready to place call to recipient');
-  const [lastTranscript, setLastTranscript] = useState<string>('');
+  const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
 
   const streamRef = useRef<WebSocketLiveCallStreamImpl | null>(null);
 
@@ -217,7 +218,7 @@ export default function AttackerPage() {
 
     setCallState('ringing');
     setStatusNote(`Calling ${targetName}... Waiting for recipient to accept`);
-    setLastTranscript('');
+    setTranscript([]);
 
     const stream = new WebSocketLiveCallStreamImpl();
     streamRef.current = stream;
@@ -228,11 +229,8 @@ export default function AttackerPage() {
         setStatusNote('Call accepted by recipient! Live audio transmission active.');
       } else if (evt.type === 'security_update') {
         const payload = evt.payload;
-        if (payload.transcript && payload.transcript.length > 0) {
-          const latest = payload.transcript[payload.transcript.length - 1];
-          if (latest) {
-            setLastTranscript(latest.text);
-          }
+        if (payload.transcript) {
+          setTranscript(payload.transcript);
         }
       } else if (evt.type === 'waveform_update') {
         if (evt.payload.waveformActivity !== undefined) {
@@ -256,6 +254,7 @@ export default function AttackerPage() {
         claimedOrgName: undefined,
         testAudioUrl: audioSourceType === 'file' ? activeAudioSample.sampleUrl : undefined,
         waitForAcceptance: true,
+        speakerRole: 'caller',
       });
 
       const assignedSession = stream.getSessionId();
@@ -582,18 +581,23 @@ export default function AttackerPage() {
             {/* Recognized Dialogue Preview */}
             <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
               <div>
-                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">
-                  Recognized Speech Stream
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2 flex items-center justify-between">
+                  <span>Live Conversation Transcript</span>
+                  <span className="text-blue-400 font-mono text-[10px]">
+                    {callState === 'active' ? 'GOOGLE STT STREAMING' : 'IDLE'}
+                  </span>
                 </div>
-                <div className="text-xs text-slate-300 font-mono min-h-[48px] bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/80">
-                  {lastTranscript || (
-                    <span className="text-slate-400 italic">
-                      {callState === 'active'
-                        ? 'Listening for speech in audio transmission...'
-                        : 'Audio dialogue will display here during active call.'}
-                    </span>
-                  )}
-                </div>
+                {transcript.length === 0 ? (
+                  <div className="text-xs text-slate-400 italic bg-slate-900/60 p-4 rounded-lg border border-slate-800/80 min-h-[72px] flex items-center justify-center">
+                    {callState === 'active'
+                      ? 'Listening to speech on microphone... Real-time Google transcript will stream here.'
+                      : 'Audio dialogue will display here during active call.'}
+                  </div>
+                ) : (
+                  <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/80">
+                    <TranscriptDisplay segments={transcript} perspective="caller" maxHeight="180px" />
+                  </div>
+                )}
               </div>
               <div className="text-[10px] text-slate-400 mt-2 flex items-center justify-between">
                 <span>Session ID:</span>

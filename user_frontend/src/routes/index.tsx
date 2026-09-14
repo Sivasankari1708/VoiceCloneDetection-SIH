@@ -80,7 +80,7 @@ export default function AppRoutes() {
           </RequireAttacker>
         }
       />
-      <Route path="/sender" element={<Navigate to="/attacker" replace />} />
+      <Route path="/sender" element={<Navigate to="/live?start=mic" replace />} />
 
       {/* Citizen Dashboard (Laptop B - Sreya) */}
       <Route path="/home" element={<AuthenticatedLayout><HomePage /></AuthenticatedLayout>} />

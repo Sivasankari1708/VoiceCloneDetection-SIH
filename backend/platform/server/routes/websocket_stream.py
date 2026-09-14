@@ -8,6 +8,7 @@ Real-Time WebSocket streaming endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Optional
 
@@ -79,32 +80,70 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
     # If call session is already accepted/active, immediately notify connecting client
     if call.status == "ACTIVE":
         log.info("[WS:Stream] Session '%s' is ACTIVE; dispatching immediate CALL_ACCEPTED.", session_id)
-        await websocket.send_text(json.dumps({
-            "event": WebSocketEventType.CALL_ACCEPTED,
-            "timestamp": utcnow().isoformat(),
-            "data": call.to_dict(),
-        }))
-        if (call.total_chunks and call.total_chunks > 0) or call.accumulated_transcript:
-            log.info("[WS:Stream] Session '%s' has running telemetry; dispatching RISK_UPDATE replay.", session_id)
+        try:
             await websocket.send_text(json.dumps({
-                "event": WebSocketEventType.RISK_UPDATE,
+                "event": WebSocketEventType.CALL_ACCEPTED,
                 "timestamp": utcnow().isoformat(),
-                "data": {
-                    "session_id": call.session_id,
-                    "chunk_id": call.total_chunks or 0,
-                    "risk_score": call.current_risk_score or 0.0,
-                    "risk_level": call.current_risk_level or "SAFE",
-                    "verdict": call.final_verdict or "inconclusive",
-                    "speech_detected": True,
-                    "transcript": call.accumulated_transcript or "",
-                    "accumulated_transcript": call.accumulated_transcript or "",
-                    "is_alert": call.alert_triggered or False,
-                    "alert_reason": call.alert_reason or "",
-                    "recommended_action": "BLOCK / VERIFY" if call.current_risk_level == "CRITICAL" else ("VERIFY" if call.current_risk_level == "HIGH" else "MONITOR"),
-                },
+                "data": call.to_dict(),
             }))
+            if (call.total_chunks and call.total_chunks > 0) or call.accumulated_transcript:
+                log.info("[WS:Stream] Session '%s' has running telemetry; dispatching RISK_UPDATE replay.", session_id)
+                await websocket.send_text(json.dumps({
+                    "event": WebSocketEventType.RISK_UPDATE,
+                    "timestamp": utcnow().isoformat(),
+                    "data": {
+                        "session_id": call.session_id,
+                        "chunk_id": call.total_chunks or 0,
+                        "risk_score": call.current_risk_score or 0.0,
+                        "risk_level": call.current_risk_level or "SAFE",
+                        "verdict": call.final_verdict or "inconclusive",
+                        "speech_detected": True,
+                        "transcript": call.accumulated_transcript or "",
+                        "accumulated_transcript": call.accumulated_transcript or "",
+                        "is_final": True,
+                        "is_alert": call.alert_triggered or False,
+                        "alert_reason": call.alert_reason or "",
+                        "recommended_action": "BLOCK / VERIFY" if call.current_risk_level == "CRITICAL" else ("VERIFY" if call.current_risk_level == "HIGH" else "MONITOR"),
+                    },
+                }))
+        except (WebSocketDisconnect, RuntimeError, Exception) as send_err:
+            log.warning("[WS:Stream] Client disconnected during initial state replay for session '%s': %s", session_id, send_err)
+            await dispatcher.unregister_call_socket(session_id, websocket)
+            db.close()
+            return
 
     chunk_counter = 0
+
+    # Dedicated background ML queue and worker task per streaming session:
+    # Completely decouples real-time audio forwarding and transcript broadcasting (< 1ms)
+    # from heavy ML inference and ASR processing (which runs concurrently in worker thread).
+    ml_queue: asyncio.Queue = asyncio.Queue(maxsize=4)
+    worker_db: Session = SessionLocal()
+    worker_orchestrator = SecurityOrchestrator(db=worker_db)
+
+    async def ml_worker_loop():
+        while True:
+            try:
+                item = await ml_queue.get()
+                if item is None:
+                    break
+                c_idx, c_raw = item
+                try:
+                    await worker_orchestrator.process_stream_chunk(
+                        session_id=session_id,
+                        chunk_data=c_raw,
+                        chunk_id=c_idx,
+                    )
+                except Exception as exc:
+                    log.error("[STREAM:ML] Error processing chunk %s for session %s: %s", c_idx, session_id, exc)
+                finally:
+                    ml_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.error("[STREAM:ML] Unexpected worker exception: %s", e)
+
+    ml_worker_task = asyncio.create_task(ml_worker_loop())
 
     try:
         while True:
@@ -119,8 +158,21 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
                 chunk_counter += 1
                 chunk_idx = chunk_counter
                 log.info("[STREAM] Session '%s' | Received binary audio chunk #%d (%d bytes)", session_id, chunk_idx, len(raw_data))
-                # Forward raw audio chunk to recipient / listening call participants
+                # 1. IMMEDIATELY forward raw audio chunk to recipient / listening call participants (< 1ms)
                 await dispatcher.send_binary_to_call(session_id, raw_data, exclude_socket=websocket)
+
+                # 2. Queue chunk for background ML processing without blocking the receive loop
+                if ml_queue.full():
+                    try:
+                        _ = ml_queue.get_nowait()
+                        ml_queue.task_done()
+                    except (asyncio.QueueEmpty, ValueError):
+                        pass
+                try:
+                    ml_queue.put_nowait((chunk_idx, raw_data))
+                except asyncio.QueueFull:
+                    pass
+
             elif "text" in message and message["text"]:
                 try:
                     payload = json.loads(message["text"])
@@ -132,36 +184,87 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
                     await websocket.send_text(json.dumps({"type": "pong"}))
                     continue
 
+                # Handle client-side Google Speech recognition stream
+                if payload.get("type") == "client_transcript":
+                    tr_text = payload.get("text", "").strip()
+                    is_final = bool(payload.get("is_final", False))
+                    speaker = payload.get("speaker", "caller")
+                    SecurityOrchestrator.mark_client_transcript_active(session_id)
+                    if tr_text:
+                        call = db.query(CallSession).filter_by(session_id=session_id).first()
+                        if call:
+                            if not call.accumulated_transcript:
+                                call.accumulated_transcript = tr_text
+                            elif is_final and tr_text not in call.accumulated_transcript:
+                                call.accumulated_transcript = f"{call.accumulated_transcript} {tr_text}".strip()
+                            db.commit()
+
+                            # If caller, check for identity claims
+                            if speaker == "caller" and not call.claimed_speaker_id:
+                                from backend.intent.identity_claim_extractor import extract_identity_claim
+                                claim_res = extract_identity_claim(call.accumulated_transcript, db)
+                                if claim_res.has_claim:
+                                    if claim_res.protected_identity:
+                                        call.claimed_speaker_id = claim_res.protected_identity.speaker_id
+                                        call.claimed_identity_id = claim_res.protected_identity.id
+                                        call.caller_name = f"{claim_res.protected_identity.full_name} (Claimed)"
+                                    elif claim_res.claimed_person:
+                                        call.caller_name = f"{claim_res.claimed_person} (Claimed)"
+                                    db.commit()
+
+                        # Dispatch transcript IMMEDIATELY to recipient and caller (< 2ms)
+                        await dispatcher.send_to_call(
+                            session_id,
+                            {
+                                "event": WebSocketEventType.RISK_UPDATE,
+                                "timestamp": utcnow().isoformat(),
+                                "data": {
+                                    "session_id": session_id,
+                                    "chunk_id": chunk_counter,
+                                    "transcript": tr_text,
+                                    "accumulated_transcript": call.accumulated_transcript if call else tr_text,
+                                    "is_final": is_final,
+                                    "speaker": speaker,
+                                    "speech_detected": True,
+                                    "verdict": call.final_verdict if call else "genuine",
+                                    "risk_score": call.current_risk_score if call else 0.0,
+                                    "risk_level": call.current_risk_level if call else "SAFE",
+                                    "identity_status": "MATCHED" if (call and call.claimed_speaker_id) else "UNVERIFIED",
+                                    "recommended_action": "MONITOR",
+                                },
+                            },
+                            exclude_socket=websocket,
+                        )
+                    continue
+
                 chunk_idx = payload.get("chunk_id", chunk_counter + 1)
                 chunk_counter = max(chunk_counter, chunk_idx)
                 raw_data = payload.get("audio", "")
                 log.info("[STREAM] Session '%s' | Received JSON audio chunk #%d", session_id, chunk_idx)
+                if ml_queue.full():
+                    try:
+                        _ = ml_queue.get_nowait()
+                        ml_queue.task_done()
+                    except (asyncio.QueueEmpty, ValueError):
+                        pass
+                try:
+                    ml_queue.put_nowait((chunk_idx, raw_data))
+                except asyncio.QueueFull:
+                    pass
             else:
                 continue
-
-            # Process chunk through Member 1 pipeline and Security Orchestrator
-            try:
-                log.info("[STREAM] Processing chunk #%d through ML pipeline...", chunk_idx)
-                await orchestrator.process_stream_chunk(
-                    session_id=session_id,
-                    chunk_data=raw_data,
-                    chunk_id=chunk_idx,
-                )
-                log.info("[STREAM] Chunk #%d processed successfully & RISK_UPDATE dispatched", chunk_idx)
-            except Exception as exc:
-                log.error("[STREAM] Error processing chunk %s for session %s: %s", chunk_idx, session_id, exc)
-                await websocket.send_text(
-                    json.dumps({
-                        "event": WebSocketEventType.ERROR,
-                        "data": {"chunk_id": chunk_idx, "error": str(exc)},
-                    })
-                )
 
     except WebSocketDisconnect:
         log.info("[WS:Stream] Client disconnected from session '%s'.", session_id)
     except Exception as exc:
         log.error("[WS:Stream] Unexpected error in session '%s': %s", session_id, exc)
     finally:
+        ml_worker_task.cancel()
+        try:
+            await ml_worker_task
+        except asyncio.CancelledError:
+            pass
+        worker_db.close()
         await dispatcher.unregister_call_socket(session_id, websocket)
         db.close()
 
@@ -251,6 +354,22 @@ async def websocket_user_feed(websocket: WebSocket, user_id: str):
     effective_user_id = user.id
     await dispatcher.register_user_socket(effective_user_id, websocket)
     log.info("[WS:UserFeed] User client connected for '%s' (%s).", user.username, effective_user_id)
+
+    # Replay any active pending incoming call for this user
+    pending_call = db.query(CallSession).filter(
+        CallSession.recipient_user_id == effective_user_id,
+        CallSession.status == "RINGING",
+    ).order_by(CallSession.start_time.desc()).first()
+    if pending_call:
+        log.info("[WS:UserFeed] Replaying pending RINGING call '%s' to user '%s'.", pending_call.session_id, user.username)
+        try:
+            await websocket.send_text(json.dumps({
+                "event": WebSocketEventType.INCOMING_CALL,
+                "timestamp": utcnow().isoformat(),
+                "data": pending_call.to_dict(),
+            }))
+        except Exception as e:
+            log.warning("[WS:UserFeed] Failed to replay incoming call: %s", e)
 
     try:
         while True:

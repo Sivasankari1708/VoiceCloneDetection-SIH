@@ -34,7 +34,8 @@ ALWAYS_IMPORTABLE = [
     "backend.audio.vad",
     "backend.models.deepfake_detector",
     "backend.models.speaker_verifier",
-    "backend.models.transcriber",
+    "backend.models.google_stt_asr",
+    "backend.models.asr_factory",
     "backend.pipeline.runner",
     "backend.intent.detector",
 ]
@@ -79,11 +80,11 @@ def test_config_defaults() -> None:
 
     cfg = PipelineConfig()
     assert cfg.target_sample_rate == 16000
-    assert cfg.whisper_model_size == "base"
-    assert cfg.whisper_device == "cpu"
+    assert cfg.google_stt_language == "en-IN"
 
     cfg_env = PipelineConfig.from_env()
     assert cfg_env.target_sample_rate == 16000
+    assert cfg_env.google_stt_language == "en-IN"
     print("  OK    PipelineConfig defaults and from_env() are valid.")
 
 

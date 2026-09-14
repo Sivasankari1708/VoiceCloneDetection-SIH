@@ -79,30 +79,37 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
     # If call session is already accepted/active, immediately notify connecting client
     if call.status == "ACTIVE":
         log.info("[WS:Stream] Session '%s' is ACTIVE; dispatching immediate CALL_ACCEPTED.", session_id)
-        await websocket.send_text(json.dumps({
-            "event": WebSocketEventType.CALL_ACCEPTED,
-            "timestamp": utcnow().isoformat(),
-            "data": call.to_dict(),
-        }))
-        if (call.total_chunks and call.total_chunks > 0) or call.accumulated_transcript:
-            log.info("[WS:Stream] Session '%s' has running telemetry; dispatching RISK_UPDATE replay.", session_id)
+        try:
             await websocket.send_text(json.dumps({
-                "event": WebSocketEventType.RISK_UPDATE,
+                "event": WebSocketEventType.CALL_ACCEPTED,
                 "timestamp": utcnow().isoformat(),
-                "data": {
-                    "session_id": call.session_id,
-                    "chunk_id": call.total_chunks or 0,
-                    "risk_score": call.current_risk_score or 0.0,
-                    "risk_level": call.current_risk_level or "SAFE",
-                    "verdict": call.final_verdict or "inconclusive",
-                    "speech_detected": True,
-                    "transcript": call.accumulated_transcript or "",
-                    "accumulated_transcript": call.accumulated_transcript or "",
-                    "is_alert": call.alert_triggered or False,
-                    "alert_reason": call.alert_reason or "",
-                    "recommended_action": "BLOCK / VERIFY" if call.current_risk_level == "CRITICAL" else ("VERIFY" if call.current_risk_level == "HIGH" else "MONITOR"),
-                },
+                "data": call.to_dict(),
             }))
+            if (call.total_chunks and call.total_chunks > 0) or call.accumulated_transcript:
+                log.info("[WS:Stream] Session '%s' has running telemetry; dispatching RISK_UPDATE replay.", session_id)
+                await websocket.send_text(json.dumps({
+                    "event": WebSocketEventType.RISK_UPDATE,
+                    "timestamp": utcnow().isoformat(),
+                    "data": {
+                        "session_id": call.session_id,
+                        "chunk_id": call.total_chunks or 0,
+                        "risk_score": call.current_risk_score or 0.0,
+                        "risk_level": call.current_risk_level or "SAFE",
+                        "verdict": call.final_verdict or "inconclusive",
+                        "speech_detected": True,
+                        "transcript": call.accumulated_transcript or "",
+                        "accumulated_transcript": call.accumulated_transcript or "",
+                        "is_final": True,
+                        "is_alert": call.alert_triggered or False,
+                        "alert_reason": call.alert_reason or "",
+                        "recommended_action": "BLOCK / VERIFY" if call.current_risk_level == "CRITICAL" else ("VERIFY" if call.current_risk_level == "HIGH" else "MONITOR"),
+                    },
+                }))
+        except (WebSocketDisconnect, RuntimeError, Exception) as send_err:
+            log.warning("[WS:Stream] Client disconnected during initial state replay for session '%s': %s", session_id, send_err)
+            await dispatcher.unregister_call_socket(session_id, websocket)
+            db.close()
+            return
 
     chunk_counter = 0
 
@@ -130,6 +137,58 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
                 # Handle ping/heartbeat
                 if payload.get("type") == "ping":
                     await websocket.send_text(json.dumps({"type": "pong"}))
+                    continue
+
+                # Handle client-side Google Speech recognition stream
+                if payload.get("type") == "client_transcript":
+                    tr_text = payload.get("text", "").strip()
+                    is_final = bool(payload.get("is_final", False))
+                    speaker = payload.get("speaker", "caller")
+                    SecurityOrchestrator.mark_client_transcript_active(session_id)
+                    if tr_text:
+                        call = db.query(CallSession).filter_by(session_id=session_id).first()
+                        if call:
+                            if not call.accumulated_transcript:
+                                call.accumulated_transcript = tr_text
+                            elif is_final and tr_text not in call.accumulated_transcript:
+                                call.accumulated_transcript = f"{call.accumulated_transcript} {tr_text}".strip()
+                            db.commit()
+
+                            # If caller, check for identity claims
+                            if speaker == "caller" and not call.claimed_speaker_id:
+                                from backend.intent.identity_claim_extractor import extract_identity_claim
+                                claim_res = extract_identity_claim(call.accumulated_transcript, db)
+                                if claim_res.has_claim:
+                                    if claim_res.protected_identity:
+                                        call.claimed_speaker_id = claim_res.protected_identity.speaker_id
+                                        call.claimed_identity_id = claim_res.protected_identity.id
+                                        call.caller_name = f"{claim_res.protected_identity.full_name} (Claimed)"
+                                    elif claim_res.claimed_person:
+                                        call.caller_name = f"{claim_res.claimed_person} (Claimed)"
+                                    db.commit()
+
+                        await dispatcher.send_to_call(
+                            session_id,
+                            {
+                                "event": WebSocketEventType.RISK_UPDATE,
+                                "timestamp": utcnow().isoformat(),
+                                "data": {
+                                    "session_id": session_id,
+                                    "chunk_id": chunk_counter,
+                                    "transcript": tr_text,
+                                    "accumulated_transcript": call.accumulated_transcript if call else tr_text,
+                                    "is_final": is_final,
+                                    "speaker": speaker,
+                                    "speech_detected": True,
+                                    "verdict": call.final_verdict if call else "genuine",
+                                    "risk_score": call.current_risk_score if call else 0.0,
+                                    "risk_level": call.current_risk_level if call else "SAFE",
+                                    "identity_status": "MATCHED" if (call and call.claimed_speaker_id) else "UNVERIFIED",
+                                    "recommended_action": "MONITOR",
+                                },
+                            },
+                            exclude_socket=websocket,
+                        )
                     continue
 
                 chunk_idx = payload.get("chunk_id", chunk_counter + 1)
@@ -251,6 +310,22 @@ async def websocket_user_feed(websocket: WebSocket, user_id: str):
     effective_user_id = user.id
     await dispatcher.register_user_socket(effective_user_id, websocket)
     log.info("[WS:UserFeed] User client connected for '%s' (%s).", user.username, effective_user_id)
+
+    # Replay any active pending incoming call for this user
+    pending_call = db.query(CallSession).filter(
+        CallSession.recipient_user_id == effective_user_id,
+        CallSession.status == "RINGING",
+    ).order_by(CallSession.start_time.desc()).first()
+    if pending_call:
+        log.info("[WS:UserFeed] Replaying pending RINGING call '%s' to user '%s'.", pending_call.session_id, user.username)
+        try:
+            await websocket.send_text(json.dumps({
+                "event": WebSocketEventType.INCOMING_CALL,
+                "timestamp": utcnow().isoformat(),
+                "data": pending_call.to_dict(),
+            }))
+        except Exception as e:
+            log.warning("[WS:UserFeed] Failed to replay incoming call: %s", e)
 
     try:
         while True:

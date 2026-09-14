@@ -77,6 +77,8 @@ class RiskUpdatePayload(BaseModel):
     speaker_match: Optional[bool] = None
     transcript: str = ""
     accumulated_transcript: str = ""
+    is_final: bool = True
+    speaker: str = "caller"
     intent: str = "NORMAL_CONVERSATION"
     intent_confidence: float = 0.0
     context_signals: List[str] = []

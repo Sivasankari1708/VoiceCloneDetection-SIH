@@ -16,6 +16,7 @@ Key Invariants:
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -55,6 +56,16 @@ log = get_logger(__name__)
 
 class SecurityOrchestrator:
     """Master Security Orchestrator coordinating AI inference, DB state, and real-time alerts."""
+
+    _client_transcript_ts: Dict[str, float] = {}
+
+    @classmethod
+    def mark_client_transcript_active(cls, session_id: str) -> None:
+        cls._client_transcript_ts[session_id] = time.time()
+
+    @classmethod
+    def is_client_stt_active(cls, session_id: str) -> bool:
+        return (time.time() - cls._client_transcript_ts.get(session_id, 0.0)) < 8.0
 
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -240,9 +251,19 @@ class SecurityOrchestrator:
         )
 
         # 1.5 Conversational Identity & Organization Claim Extraction
-        # If speaker/org identity was not established yet, parse speech dialogue
-        if not call.claimed_speaker_id and telemetry.accumulated_transcript:
-            claim_res = extract_identity_claim(telemetry.accumulated_transcript, self.db)
+        if telemetry.transcript:
+            if not call.accumulated_transcript:
+                call.accumulated_transcript = telemetry.transcript
+            elif telemetry.transcript not in call.accumulated_transcript:
+                call.accumulated_transcript = f"{call.accumulated_transcript} {telemetry.transcript}".strip()
+            telemetry.accumulated_transcript = call.accumulated_transcript
+            self.db.commit()
+        elif call.accumulated_transcript:
+            telemetry.accumulated_transcript = call.accumulated_transcript
+
+        effective_transcript = telemetry.accumulated_transcript or call.accumulated_transcript or ""
+        if not call.claimed_speaker_id and effective_transcript:
+            claim_res = extract_identity_claim(effective_transcript, self.db)
             if claim_res.has_claim:
                 if claim_res.protected_identity:
                     call.claimed_speaker_id = claim_res.protected_identity.speaker_id
@@ -297,7 +318,10 @@ class SecurityOrchestrator:
             else telemetry.raw_speaker_sim
         )
 
-        if not call.claimed_speaker_id:
+        if not telemetry.speech_detected:
+            telemetry.identity_status = "UNVERIFIED"
+            telemetry.verdict = "inconclusive"
+        elif not call.claimed_speaker_id:
             # Caller never claimed an enrolled protected identity
             telemetry.identity_status = "UNVERIFIED"
             if effective_synth is not None and effective_synth >= 0.60:
@@ -306,19 +330,16 @@ class SecurityOrchestrator:
                 telemetry.verdict = "genuine"
         else:
             # Caller claimed an enrolled protected identity (e.g. Rajesh Malhotra)
-            if effective_sim is not None:
-                if effective_sim >= 0.70 and (effective_synth is not None and effective_synth < 0.40):
-                    telemetry.identity_status = "VERIFIED"
-                    telemetry.verdict = "genuine"
-                elif effective_sim >= 0.70 and (effective_synth is not None and effective_synth >= 0.60):
-                    telemetry.identity_status = "IDENTITY_MISMATCH"
-                    telemetry.verdict = "cloned"
-                elif effective_sim < 0.50:
-                    telemetry.identity_status = "IDENTITY_MISMATCH"
-                    telemetry.verdict = "imposter"
-                else:
-                    telemetry.identity_status = "VERIFICATION_DEGRADED"
-                    telemetry.verdict = "inconclusive"
+            # Invariant: Deepfake synthesis strictly overrides speaker similarity!
+            if effective_synth is not None and effective_synth >= 0.60:
+                telemetry.identity_status = "IDENTITY_MISMATCH"
+                telemetry.verdict = "cloned"
+            elif effective_sim is not None and effective_sim < 0.50:
+                telemetry.identity_status = "IDENTITY_MISMATCH"
+                telemetry.verdict = "imposter"
+            elif effective_sim is not None and effective_sim >= 0.70:
+                telemetry.identity_status = "VERIFIED"
+                telemetry.verdict = "genuine"
             else:
                 telemetry.identity_status = "VERIFICATION_DEGRADED"
                 telemetry.verdict = "inconclusive"
@@ -339,7 +360,7 @@ class SecurityOrchestrator:
         call.current_risk_score = policy_eval.risk_score
         call.current_risk_level = policy_eval.risk_level
         call.final_verdict = telemetry.verdict
-        call.accumulated_transcript = telemetry.accumulated_transcript
+        call.accumulated_transcript = effective_transcript or call.accumulated_transcript
         if policy_eval.should_warn_user:
             call.alert_triggered = True
             call.alert_reason = policy_eval.warning_message
@@ -512,6 +533,8 @@ class SecurityOrchestrator:
             speaker_match=telemetry.speaker_match,
             transcript=telemetry.transcript,
             accumulated_transcript=telemetry.accumulated_transcript,
+            is_final=telemetry.is_final,
+            speaker="caller",
             intent=telemetry.intent,
             intent_confidence=telemetry.intent_confidence,
             context_signals=telemetry.context_signals,

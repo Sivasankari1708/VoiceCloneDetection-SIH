@@ -15,10 +15,12 @@ import {
   UserCheck,
   PhoneForwarded,
   Volume2,
+  Play,
 } from 'lucide-react';
 import { useAppContext, useActiveCall, useCallHistory } from '../context/AppContext';
 import { liveCallStream } from '../services/calls/liveCallStream';
 import { WebSocketLiveCallStreamImpl, type StreamDiagnostics } from '../services/calls/webSocketLiveCallStream';
+import { AudioFileStreamer } from '../services/calls/audioFileStreamer';
 import type { CallEvent, CallHistoryItem, CallSession, CallTimelineEvent } from '../types';
 import LiveVoiceWaveform from '../components/waveform/LiveVoiceWaveform';
 import CallerCard from '../components/call/CallerCard';
@@ -54,6 +56,42 @@ export default function LiveCallPage() {
   const warningDismissedRef = useRef(false);
   const [riskHistory, setRiskHistory] = useState<RiskTimelineEntry[]>([]);
   const activeSessionIdRef = useRef<string | null>(null);
+  const [isInjectingDemo, setIsInjectingDemo] = useState(false);
+
+  const handleInjectDemoAudio = async () => {
+    if (isInjectingDemo) return;
+    setIsInjectingDemo(true);
+    try {
+      if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
+        liveCallStream.resumePlaybackAudio();
+      }
+      const targetSession =
+        querySessionId ||
+        (liveCallStream instanceof WebSocketLiveCallStreamImpl ? liveCallStream.getSessionId() : null) ||
+        callId;
+      const streamer = new AudioFileStreamer();
+      const wsUrl = `${config.wsBaseUrl}/ws/stream/${targetSession}`;
+      const testWs = new WebSocket(wsUrl);
+      testWs.binaryType = 'arraybuffer';
+      await new Promise<void>((resolve, reject) => {
+        testWs.onopen = () => resolve();
+        testWs.onerror = (e) => reject(e);
+      });
+      await streamer.startStreaming(
+        '/samples/cfo_rajesh_urgent_wire.wav',
+        testWs,
+        undefined,
+        () => {
+          setIsInjectingDemo(false);
+          testWs.close();
+        },
+        false
+      );
+    } catch (err) {
+      console.warn('[LiveCallPage] Error injecting demo audio:', err);
+      setIsInjectingDemo(false);
+    }
+  };
 
   // 1. Maintain persistent live call event subscription throughout page lifecycle
   useEffect(() => {
@@ -62,7 +100,7 @@ export default function LiveCallPage() {
         const initialSession = event.payload as CallSession;
         setActiveCall(initialSession);
         setStartTime(new Date());
-        setMicActive(!isRecipientMode);
+        setMicActive(true);
         if (initialSession.security) {
           const initTs = new Date().toLocaleTimeString('en-GB', { hour12: false });
           setRiskHistory([
@@ -139,69 +177,146 @@ export default function LiveCallPage() {
     };
   }, []);
 
-  // 3. Connect to call session on mount or whenever querySessionId changes
+  // 3. Connect to call session on mount, whenever querySessionId changes, or start live mic session
   useEffect(() => {
-    if (!querySessionId) return;
-    if (activeSessionIdRef.current === querySessionId) return;
+    const token = localStorage.getItem('voiceshield_token');
 
-    activeSessionIdRef.current = querySessionId;
-    setStartTime(new Date());
-    setRiskHistory([]);
+    // If querySessionId is provided, connect directly to that session
+    if (querySessionId) {
+      if (activeSessionIdRef.current === querySessionId) return;
 
-    if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
-      liveCallStream.resumePlaybackAudio();
+      activeSessionIdRef.current = querySessionId;
+      setStartTime(new Date());
+      setRiskHistory([]);
+
+      if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
+        liveCallStream.resumePlaybackAudio();
+      }
+
+      // Join backend session with active two-way microphone communication
+      setMicActive(true);
+      liveCallStream.start({
+        sessionId: querySessionId,
+        callerName: queryCallerName || 'Inbound Call',
+        claimedSpeakerId: queryClaimedSpeaker || undefined,
+        receiveOnly: false,
+        speakerRole: 'employee',
+      });
+
+      // Prefetch existing call state (for late joiners / reloads)
+      fetch(`${config.apiBaseUrl}/api/calls/${querySessionId}`, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data) return;
+          if (data.status === 'RINGING') {
+            console.info('[LiveCallPage] Call session is currently RINGING — auto-accepting call now:', querySessionId);
+            fetch(`${config.apiBaseUrl}/api/calls/${querySessionId}/accept`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+            }).catch((e) => console.warn('[LiveCallPage] Auto-accept call error:', e));
+          }
+
+          if (data.caller_name || data.claimed_speaker_id) {
+            updateActiveCall({
+              caller: {
+                name: data.caller_name || 'Inbound Call',
+                claimedRole: data.claimed_speaker_id === 'LA_0069' ? 'Chief Financial Officer' : '',
+                organization: data.claimed_org_name || '',
+                status: data.claimed_speaker_id ? 'checking' : 'unverified',
+                statusMessage: data.claimed_speaker_id ? 'Verifying claimed voice signature...' : 'Caller identity not confirmed',
+              },
+            });
+          }
+
+          if (data.accumulated_transcript || data.current_risk_score > 0) {
+            updateActiveCall({
+              security: {
+                score: data.current_risk_score,
+                severity: mapRiskLevel(data.current_risk_level),
+                message: data.alert_reason || scoreToSecurityMessage(data.current_risk_score),
+                voiceAuthenticity: mapVerdict(data.final_verdict),
+                callerIdentity: mapIdentityStatus(data.claimed_speaker_id ? 'INCONCLUSIVE' : 'UNENROLLED'),
+                signals: [],
+                securityTeamNotified: data.alert_triggered,
+              },
+              transcript: data.accumulated_transcript
+                ? [
+                    {
+                      id: 'seg-init',
+                      speaker: 'caller',
+                      text: data.accumulated_transcript,
+                      timestamp: 0,
+                      isPartial: false,
+                    },
+                  ]
+                : [],
+            });
+          }
+        })
+        .catch((err) => console.warn('[LiveCallPage] Failed to prefetch call state:', err));
+
+      return () => {
+        liveCallStream.stop(false);
+        activeSessionIdRef.current = null;
+      };
     }
 
-    // Join backend session in receive-only mode
-    liveCallStream.start({
-      sessionId: querySessionId,
-      callerName: queryCallerName || 'Inbound Call',
-      claimedSpeakerId: queryClaimedSpeaker || undefined,
-      receiveOnly: true,
-    });
-
-    // Prefetch existing call state (for late joiners / reloads)
-    const token = localStorage.getItem('voiceshield_token');
-    fetch(`${config.apiBaseUrl}/api/calls/${querySessionId}`, {
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+    // When navigating to /live without a query session, check for an active backend call first
+    fetch(`${config.apiBaseUrl}/api/calls?status=ACTIVE`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!data) return;
-        if (data.accumulated_transcript || data.current_risk_score > 0) {
-          updateActiveCall({
-            security: {
-              score: data.current_risk_score,
-              severity: mapRiskLevel(data.current_risk_level),
-              message: data.alert_reason || scoreToSecurityMessage(data.current_risk_score),
-              voiceAuthenticity: mapVerdict(data.final_verdict),
-              callerIdentity: mapIdentityStatus(data.claimed_speaker_id ? 'INCONCLUSIVE' : 'UNENROLLED'),
-              signals: [],
-              securityTeamNotified: data.alert_triggered,
-            },
-            transcript: data.accumulated_transcript
-              ? [
-                  {
-                    id: 'seg-init',
-                    speaker: 'caller',
-                    text: data.accumulated_transcript,
-                    timestamp: 0,
-                    isPartial: false,
-                  },
-                ]
-              : [],
+      .then((res) => (res.ok ? res.json() : []))
+      .then((activeCalls) => {
+        if (Array.isArray(activeCalls) && activeCalls.length > 0) {
+          const c = activeCalls[0];
+          navigate(
+            `/live?session_id=${c.session_id}&caller_name=${encodeURIComponent(
+              c.caller_name || 'Inbound Call'
+            )}&claimed_speaker=${encodeURIComponent(c.claimed_speaker_id || '')}`,
+            { replace: true }
+          );
+          return;
+        }
+
+        // No active call: start live microphone audio stream for testing
+        if (!activeSessionIdRef.current) {
+          activeSessionIdRef.current = callId;
+          setStartTime(new Date());
+          setMicActive(true);
+          liveCallStream.start({
+            sessionId: callId,
+            callerName: 'Live Microphone Input',
+            receiveOnly: false,
+            speakerRole: 'employee',
           });
         }
       })
-      .catch((err) => console.warn('[LiveCallPage] Failed to prefetch call state:', err));
+      .catch(() => {
+        if (!activeSessionIdRef.current) {
+          activeSessionIdRef.current = callId;
+          setStartTime(new Date());
+          setMicActive(true);
+          liveCallStream.start({
+            sessionId: callId,
+            callerName: 'Live Microphone Input',
+            receiveOnly: false,
+            speakerRole: 'employee',
+          });
+        }
+      });
 
     return () => {
       liveCallStream.stop(false);
       activeSessionIdRef.current = null;
     };
-  }, [querySessionId, queryCallerName, queryClaimedSpeaker, updateActiveCall]);
+  }, [querySessionId, queryCallerName, queryClaimedSpeaker, callId, navigate, updateActiveCall]);
 
   const handleStartLiveMic = useCallback(async () => {
     setStartTime(new Date());
@@ -276,7 +391,7 @@ export default function LiveCallPage() {
         </div>
         <h2 className="text-xl font-bold text-slate-800">Live Call & Microphone Analysis</h2>
         <p className="text-slate-500 text-sm mt-2 max-w-md">
-          Start real-time Whisper ASR speech-to-text, deepfake detection, and biometric verification using your real microphone voice.
+          Start real-time Google Cloud Speech ASR, deepfake detection, and biometric verification using your real microphone voice.
         </p>
         <div className="mt-6 flex flex-wrap gap-3 justify-center">
           <Button variant="primary" size="md" icon={<Mic size={16} />} onClick={handleStartLiveMic}>
@@ -351,15 +466,10 @@ export default function LiveCallPage() {
             {startTime && <CallTimer startTime={startTime} active />}
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
-            {isRecipientMode ? (
-              <span className="flex items-center gap-1 text-blue-700 font-medium">
-                <Radio size={12} className="text-blue-600 animate-pulse" />
-                Live Monitoring (Receive-Only)
-              </span>
-            ) : micActive ? (
+            {micActive ? (
               <span className="flex items-center gap-1 text-green-700 font-medium">
                 <Mic size={12} className="text-green-600 animate-pulse" />
-                Mic Live (16kHz PCM)
+                Live Microphone (16kHz Google STT)
               </span>
             ) : (
               <span className="flex items-center gap-1 text-amber-600 font-medium">
@@ -369,7 +479,7 @@ export default function LiveCallPage() {
             )}
             <span className="text-slate-300">•</span>
             <span className="text-slate-600 font-medium truncate">
-              {isRecipientMode ? 'Mode: Recipient Live Monitoring' : 'Mode: Audio Transmission Stream'}
+              {isRecipientMode ? 'Mode: Protected Recipient' : 'Mode: Real-Time Voice Protection'}
             </span>
           </div>
         </div>
@@ -412,7 +522,7 @@ export default function LiveCallPage() {
                   </span>
                 </div>
                 <p className="text-xs text-blue-800 mt-1 leading-relaxed">
-                  Connected to active call session. Voice clone detection, biometric authenticity scores, and real-time Whisper transcription telemetry are being received directly from the AI detection pipeline.
+                  Connected to active call session. Voice clone detection, biometric authenticity scores, and real-time Speech-to-Text transcription telemetry are being received directly from the AI detection pipeline.
                 </p>
                 <div className="mt-2 flex items-center gap-2 text-[11px] text-blue-700 font-medium">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -446,7 +556,7 @@ export default function LiveCallPage() {
 
         {/* 4. Prominent Two-Column Real-Time Hub: Live Transcript & Voice Waveform / Signals */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* Main Column: Live Speech-To-Text Transcript (Whisper & Caller Dialogue) */}
+          {/* Main Column: Live Speech-To-Text Transcript (Caller Dialogue) */}
           <div className="lg:col-span-7">
             <Card
               className="h-full flex flex-col"
@@ -517,18 +627,29 @@ export default function LiveCallPage() {
                   <span>•</span>
                   <span className="text-slate-500">FastAPI ML Pipeline</span>
                 </div>
-                {isRecipientMode && (
-                  <button
-                    onClick={() => {
-                      if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
-                        liveCallStream.resumePlaybackAudio();
-                      }
-                    }}
-                    className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200 cursor-pointer"
-                  >
-                    <Volume2 size={12} />
-                    Speaker Output (Click to Unmute / Test Sound)
-                  </button>
+                {activeCall && (
+                  <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
+                    <button
+                      onClick={() => {
+                        if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
+                          liveCallStream.resumePlaybackAudio();
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200 cursor-pointer"
+                    >
+                      <Volume2 size={12} />
+                      Speaker Output (Click to Unmute / Test Sound)
+                    </button>
+                    <button
+                      disabled={isInjectingDemo}
+                      onClick={handleInjectDemoAudio}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-300 shadow-xs cursor-pointer hover:bg-emerald-100 transition disabled:opacity-50"
+                      title="Inject CFO urgent wire transfer audio directly to test live speech-to-text transcription and deepfake detection"
+                    >
+                      <Play size={11} className={isInjectingDemo ? 'animate-spin' : ''} />
+                      {isInjectingDemo ? 'Streaming Audio Chunks...' : 'Test Stream (Inject Voice Clone Audio)'}
+                    </button>
+                  </div>
                 )}
               </div>
             </Card>
@@ -662,7 +783,7 @@ export default function LiveCallPage() {
                 </div>
                 {diagnostics.lastTranscript && (
                   <div className="col-span-2 md:col-span-4 mt-1 bg-slate-950 p-2.5 rounded border border-slate-800">
-                    <span className="text-slate-500 text-[10px]">Latest Whisper Transcript: </span>
+                    <span className="text-slate-500 text-[10px]">Latest Speech Transcript: </span>
                     <span className="text-slate-100 font-semibold">"{diagnostics.lastTranscript}"</span>
                   </div>
                 )}

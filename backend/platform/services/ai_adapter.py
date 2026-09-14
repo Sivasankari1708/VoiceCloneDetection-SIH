@@ -62,6 +62,7 @@ class ProcessedChunkTelemetry:
     real_time_factor: float
     stage_timings_ms: Dict[str, float]
     risk_decision: RiskDecision
+    is_final: bool = True
 
 
 class AIAdapter:
@@ -183,7 +184,8 @@ class AIAdapter:
             try:
                 wav_np, _ = self.streaming_pipeline._decode_chunk(tmp_path)
                 peak = float(np.max(np.abs(wav_np))) if len(wav_np) > 0 else 0.0
-                if 0.006 < peak < 0.45:
+                # Only normalize active speech (peak >= 0.04). Do NOT amplify ambient silence or mic hiss.
+                if 0.04 <= peak < 0.45:
                     wav_np = wav_np * (0.85 / (peak + 1e-8))
                 return wav_np
             finally:
@@ -194,7 +196,8 @@ class AIAdapter:
             if arr.ndim > 1:
                 arr = arr.mean(axis=0)
             peak = float(np.max(np.abs(arr))) if len(arr) > 0 else 0.0
-            if 0.006 < peak < 0.45:
+            # Only normalize active speech (peak >= 0.04). Do NOT amplify ambient silence or mic hiss.
+            if 0.04 <= peak < 0.45:
                 arr = arr * (0.85 / (peak + 1e-8))
             return np.clip(arr, -1.0, 1.0)
 
@@ -269,8 +272,13 @@ class AIAdapter:
             intent_confidence=result.intent_confidence,
         )
 
-        # Get accumulated transcript from session
-        accumulated_text = " ".join(session.accumulated_transcript_segments)
+        # Get accumulated transcript from session plus any active live speech
+        base_acc = " ".join(session.accumulated_transcript_segments).strip()
+        current_chunk_text = (result.transcript or "").strip()
+        if current_chunk_text and current_chunk_text not in base_acc:
+            accumulated_text = f"{base_acc} {current_chunk_text}".strip() if base_acc else current_chunk_text
+        else:
+            accumulated_text = base_acc
 
         log.info(
             "[ML] Chunk #%s | Speech=%s | Verdict=%s | SynthProb=%.3f | Transcript='%s' | Intent=%s (conf=%.2f)",
@@ -306,6 +314,7 @@ class AIAdapter:
             real_time_factor=result.real_time_factor,
             stage_timings_ms=result.stage_timings_ms,
             risk_decision=risk_decision,
+            is_final=getattr(result, "is_final", True),
         )
 
     def analyze_batch_file(

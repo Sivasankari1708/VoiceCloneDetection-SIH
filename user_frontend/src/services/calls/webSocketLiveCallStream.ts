@@ -50,6 +50,7 @@ export interface StartCallParams {
   testAudioUrl?: string; // If provided, streams real WAV file chunks instead of mic
   receiveOnly?: boolean;  // If true (e.g. recipient monitoring), do not capture mic or stream audio
   waitForAcceptance?: boolean; // If true, wait for CALL_ACCEPTED before streaming audio
+  speakerRole?: 'caller' | 'employee';
 }
 
 // Persistent shared playback audio context across navigation and component mounts
@@ -75,6 +76,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   private audioFileStreamer: AudioFileStreamer = new AudioFileStreamer();
   private onAcceptCallback: (() => void) | null = null;
   private canStreamAudio = false;
+  private speakerRole: 'caller' | 'employee' = 'caller';
 
   // Web Audio Graph & Buffering
   private audioContext: AudioContext | null = null;
@@ -84,6 +86,8 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
   private rawSampleBuffer: number[] = [];
   private animFrameId: number | null = null;
   private lastCallbackLogTime = 0;
+  // Google Web Speech Recognition engine
+  private speechRecognizer: any = null;
 
   // Incoming audio playback queue (for recipient to hear caller voice)
   private nextPlayTime = 0;
@@ -159,6 +163,15 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
         t.enabled = enabled;
       });
     }
+    if (!enabled && this.speechRecognizer) {
+      try {
+        this.speechRecognizer.abort();
+      } catch (_) {}
+    } else if (enabled && this.speechRecognizer && this.active) {
+      try {
+        this.speechRecognizer.start();
+      } catch (_) {}
+    }
   }
 
   async start(
@@ -179,6 +192,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
 
     const callId = params.callId || callIdFallback;
 
+    this.speakerRole = params.speakerRole || (params.receiveOnly ? 'employee' : 'caller');
     this.canStreamAudio = !params.waitForAcceptance;
 
     // Immediately initialize microphone if caller is using live mic (ensures user gesture unlocks mic)
@@ -341,7 +355,7 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       this.diagnostics.wsStatus = 'connected';
       this.diagnostics.lastEvent = 'WS_CONNECTED';
 
-      if (!params.waitForAcceptance) {
+      if (!params.waitForAcceptance || this.canStreamAudio) {
         await startAudioSource();
       } else {
         console.info('[WS] Waiting for recipient to accept before starting audio stream...');
@@ -626,6 +640,124 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       };
 
       this.startRealRMSLoop();
+
+      // Initialize Google Web Speech Recognition (Chrome native Google Cloud ASR engine)
+      try {
+        const SpeechRecognition =
+          (window as unknown as { SpeechRecognition?: any }).SpeechRecognition ||
+          (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
+        if (SpeechRecognition) {
+          const createAndStartRecognizer = () => {
+            if (!this.active || this.micMuted || !this.mediaStream) return;
+            try {
+              if (this.speechRecognizer) {
+                try {
+                  this.speechRecognizer.abort();
+                } catch (_) {}
+                this.speechRecognizer = null;
+              }
+
+              const recognizer = new SpeechRecognition();
+              recognizer.continuous = true;
+              recognizer.interimResults = true;
+              recognizer.maxAlternatives = 1;
+              recognizer.lang = navigator.language || 'en-US';
+
+              recognizer.onresult = (event: any) => {
+                if (this.micMuted || !this.active) return;
+                let interim = '';
+                let finalStr = '';
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                  const res = event.results[i];
+                  if (res.isFinal) {
+                    finalStr += ' ' + res[0].transcript;
+                  } else {
+                    interim += ' ' + res[0].transcript;
+                  }
+                }
+                finalStr = finalStr.trim();
+                interim = interim.trim();
+
+                const emitTranscript = (text: string, isFinal: boolean) => {
+                  if (!text) return;
+                  // Update local live transcript display immediately
+                  this.handleRiskUpdate({
+                    session_id: this.sessionId || 'live-mic',
+                    chunk_id: Date.now(),
+                    timestamp: new Date().toISOString(),
+                    speech_detected: true,
+                    risk_score: 0,
+                    risk_level: 'SAFE',
+                    verdict: 'genuine',
+                    transcript: text,
+                    accumulated_transcript: text,
+                    is_final: isFinal,
+                    speaker: this.speakerRole,
+                    intent: 'NORMAL_CONVERSATION',
+                    intent_confidence: 0,
+                    context_signals: [],
+                    reasons: [],
+                    recommended_action: 'MONITOR',
+                    is_alert: false,
+                    latency_ms: 0,
+                    real_time_factor: 0,
+                    identity_status: 'MATCHED',
+                  });
+
+                  // Forward to other call participant over the backend WebSocket
+                  if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(
+                      JSON.stringify({
+                        type: 'client_transcript',
+                        text: text,
+                        is_final: isFinal,
+                        speaker: this.speakerRole,
+                        timestamp: Date.now(),
+                      })
+                    );
+                  }
+                };
+
+                if (finalStr) {
+                  emitTranscript(finalStr, true);
+                }
+                if (interim) {
+                  emitTranscript(interim, false);
+                }
+              };
+
+              recognizer.onerror = (err: any) => {
+                const errType = err?.error || err;
+                console.debug('[VOICE:GoogleSpeech] Event:', errType);
+                if (errType === 'not-allowed') {
+                  console.warn('[VOICE] SpeechRecognition permission denied.');
+                }
+              };
+
+              recognizer.onend = () => {
+                if (this.active && !this.micMuted && this.mediaStream) {
+                  setTimeout(() => {
+                    createAndStartRecognizer();
+                  }, 200);
+                }
+              };
+
+              recognizer.start();
+              this.speechRecognizer = recognizer;
+              console.info('[VOICE] Initialized continuous Google Web Speech Recognition for real-time microphone transcript.');
+            } catch (err) {
+              console.warn('[VOICE] SpeechRecognition init retry in 500ms:', err);
+              if (this.active && !this.micMuted) {
+                setTimeout(() => createAndStartRecognizer(), 500);
+              }
+            }
+          };
+
+          createAndStartRecognizer();
+        }
+      } catch (speechErr) {
+        console.warn('[VOICE] Google Web Speech Recognition skipped:', speechErr);
+      }
     } catch (err) {
       console.error('[VOICE] Microphone initialization error:', err);
       this.diagnostics.micStatus = 'denied';
@@ -699,12 +831,18 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       this.audioContext.close().catch(() => {});
       this.audioContext = null;
     }
+    if (this.speechRecognizer) {
+      try {
+        this.speechRecognizer.abort();
+      } catch (_) {}
+      this.speechRecognizer = null;
+    }
     this.rawSampleBuffer = [];
   }
 
   // ── Authoritative Backend Responses (Zero Frontend Risk Simulation) ──
   private handleRiskUpdate(data: BackendRiskUpdate): void {
-    const { security, transcriptSegment } = mapBackendRiskUpdate(
+    const { security, transcriptSegment, fullTranscript } = mapBackendRiskUpdate(
       data,
       this.callStartTime,
       this.transcriptCache
@@ -714,14 +852,19 @@ export class WebSocketLiveCallStreamImpl implements LiveCallStream {
       security: security as SecurityStatus,
     };
 
-    // Stable transcript update using deterministic chunk ID
-    if (transcriptSegment) {
+    // Stable transcript update using deterministic chunk ID or progressive stream
+    if (fullTranscript) {
+      this.transcriptCache = fullTranscript;
+      partial.transcript = [...this.transcriptCache];
+    } else if (transcriptSegment) {
       const existingIdx = this.transcriptCache.findIndex((t) => t.id === transcriptSegment.id);
       if (existingIdx >= 0) {
         this.transcriptCache[existingIdx] = transcriptSegment;
       } else {
         this.transcriptCache.push(transcriptSegment);
       }
+      partial.transcript = [...this.transcriptCache];
+    } else if (this.transcriptCache.length > 0) {
       partial.transcript = [...this.transcriptCache];
     }
 

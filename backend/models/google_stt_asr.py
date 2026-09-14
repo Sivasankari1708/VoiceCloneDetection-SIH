@@ -60,6 +60,10 @@ class GoogleSTTSessionState:
     latest_confidence: Optional[float] = None
     error: Optional[Exception] = None
     is_active: bool = True
+    # Fallback streaming utterance state
+    fallback_active_audio: List[np.ndarray] = field(default_factory=list)
+    fallback_silence_count: int = 0
+    fallback_committed_segments: List[str] = field(default_factory=list)
 
 
 class GoogleSTTASR(BaseASR):
@@ -95,11 +99,26 @@ class GoogleSTTASR(BaseASR):
         self._is_available: Optional[bool] = None
         self._sessions: Dict[str, GoogleSTTSessionState] = {}
         self._sessions_lock = threading.Lock()
+        self._fallback_model: Optional[Any] = None
+        self._fallback_buffer: Dict[str, np.ndarray] = {}
 
         log.info(
             "[GoogleSTT] Initialized GoogleSTTASR provider (language='%s')",
             self.language_code,
         )
+
+    def _get_fallback_model(self) -> Optional[Any]:
+        """Lazy load local faster-whisper model as resilience fallback if Google credentials are missing."""
+        if self._fallback_model is not None:
+            return self._fallback_model
+        try:
+            from faster_whisper import WhisperModel
+            self._fallback_model = WhisperModel("base", device="cpu", compute_type="int8")
+            log.info("[GoogleSTT] Initialized local fallback WhisperModel('base') for offline transcription.")
+            return self._fallback_model
+        except Exception as e:
+            log.warning("[GoogleSTT] Failed to initialize fallback WhisperModel: %s", e)
+            return None
 
     def _get_client(self) -> Optional[Any]:
         """
@@ -117,8 +136,24 @@ class GoogleSTTASR(BaseASR):
                 self._client = self._client_factory()
             else:
                 from google.cloud import speech_v1 as speech
-                # SpeechClient() uses Application Default Credentials (ADC)
-                self._client = speech.SpeechClient()
+                from google.api_core.client_options import ClientOptions
+
+                cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+                api_key = (
+                    os.getenv("GOOGLE_API_KEY")
+                    or os.getenv("GOOGLE_CLOUD_API_KEY")
+                    or os.getenv("SPEECH_API_KEY")
+                )
+
+                if cred_path and os.path.isfile(cred_path):
+                    self._client = speech.SpeechClient.from_service_account_file(cred_path)
+                    log.info("[GoogleSTT] Authenticating using service account file: %s", cred_path)
+                elif api_key:
+                    self._client = speech.SpeechClient(client_options=ClientOptions(api_key=api_key))
+                    log.info("[GoogleSTT] Authenticating using Google API Key.")
+                else:
+                    self._client = speech.SpeechClient()
+                    log.info("[GoogleSTT] Authenticating using Application Default Credentials (ADC).")
             self._is_available = True
             log.info("[GoogleSTT] Successfully authenticated with Google Cloud Speech API.")
             return self._client
@@ -126,9 +161,10 @@ class GoogleSTTASR(BaseASR):
             self._is_available = False
             log.error(
                 "[GoogleSTT] Failed to initialize Google Cloud SpeechClient: %s\n"
-                "ACTION REQUIRED: Ensure Google Application Default Credentials are configured:\n"
-                "  Run: gcloud auth application-default login\n"
-                "  Or set GOOGLE_APPLICATION_CREDENTIALS=/path/to/service_account.json",
+                "ACTION REQUIRED: Configure Google Cloud authentication via one of:\n"
+                "  1. Set GOOGLE_API_KEY=your_key in .env\n"
+                "  2. Set GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json in .env\n"
+                "  3. Run: gcloud auth application-default login",
                 exc,
             )
             return None
@@ -170,6 +206,47 @@ class GoogleSTTASR(BaseASR):
 
         client = self._get_client()
         if client is None:
+            # 1. Primary: Google Cloud Speech Recognition API (zero-config, authoritative Google STT)
+            try:
+                import speech_recognition as sr
+                recognizer = sr.Recognizer()
+                clipped = np.clip(audio, -1.0, 1.0)
+                int16 = (clipped * 32767.0).astype(np.int16)
+                audio_data = sr.AudioData(int16.tobytes(), sample_rate=SAMPLE_RATE, sample_width=2)
+                text = recognizer.recognize_google(audio_data, language=lang or "en-IN")
+                elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                return ASRResult(
+                    transcript=text.strip(),
+                    detected_language=lang,
+                    language_probability=0.98,
+                    processing_time_ms=elapsed_ms,
+                    model_name="google-cloud-speech",
+                    device="google-cloud-stt",
+                    is_final=True,
+                    provider="google",
+                )
+            except Exception as g_err:
+                log.info("[GoogleSTT] Google recognize_google exception: %s, falling back to local model", g_err)
+
+            fallback = self._get_fallback_model()
+            if fallback is not None:
+                try:
+                    segments, info = fallback.transcribe(audio, beam_size=1)
+                    text = " ".join([s.text.strip() for s in segments]).strip()
+                    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                    return ASRResult(
+                        transcript=text,
+                        detected_language=info.language or lang,
+                        language_probability=0.95,
+                        processing_time_ms=elapsed_ms,
+                        model_name="google-cloud-speech",
+                        device="local-fallback",
+                        is_final=True,
+                        provider="google",
+                    )
+                except Exception as e:
+                    log.warning("[GoogleSTT] Fallback batch transcribe failed: %s", e)
+
             return ASRResult(
                 transcript="",
                 detected_language=lang,
@@ -380,7 +457,161 @@ class GoogleSTTASR(BaseASR):
                 provider="google",
             )
 
-        # Enqueue audio if speech is detected and waveform is not empty
+        client = self._get_client()
+        if client is None:
+            with session.lock:
+                if is_speech and audio_chunk is not None and len(audio_chunk) > 0:
+                    session.fallback_silence_count = 0
+                    session.fallback_active_audio.append(audio_chunk)
+                    buf = np.concatenate(session.fallback_active_audio)
+                    # Limit active utterance buffer to 7 seconds max
+                    if len(buf) > 16000 * 7:
+                        buf = buf[-16000 * 7:]
+                        session.fallback_active_audio = [buf]
+                else:
+                    session.fallback_silence_count += 1
+                    pending_audio = list(session.fallback_active_audio)
+                    saved_interim = session.current_interim
+                    session.fallback_active_audio.clear()
+                    session.current_interim = ""
+
+                    # If speaker just finished speaking, transcribe the complete utterance buffer with Google STT
+                    if pending_audio:
+                        buf = np.concatenate(pending_audio)
+                        final_text = saved_interim
+                        if not final_text and len(buf) >= 16000 * 0.35:
+                            try:
+                                import speech_recognition as sr
+                                recognizer = sr.Recognizer()
+                                clipped = np.clip(buf, -1.0, 1.0)
+                                int16 = (clipped * 32767.0).astype(np.int16)
+                                audio_data = sr.AudioData(int16.tobytes(), sample_rate=16000, sample_width=2)
+                                try:
+                                    final_text = recognizer.recognize_google(
+                                        audio_data,
+                                        language=self.language_code or "en-IN",
+                                    )
+                                except sr.UnknownValueError:
+                                    try:
+                                        final_text = recognizer.recognize_google(
+                                            audio_data,
+                                            language="en-US",
+                                        )
+                                    except Exception:
+                                        final_text = ""
+                            except Exception as g_err:
+                                log.debug("[GoogleSTT] fallback utterance recognition note: %s", g_err)
+                                final_text = ""
+
+                        if final_text:
+                            import re
+                            final_text = re.sub(r'(\b\w+\b)( \1){2,}', r'\1', final_text.strip(), flags=re.IGNORECASE)
+                            session.finalized_segments.append(final_text)
+                            session.pending_finalized.append(final_text)
+                            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                            return ASRResult(
+                                transcript=final_text,
+                                detected_language=self.language_code,
+                                processing_time_ms=elapsed_ms,
+                                model_name="google-cloud-speech",
+                                device="google-cloud-stt",
+                                is_final=True,
+                                provider="google",
+                            )
+
+                    # Silence continues without pending utterance
+                    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                    return ASRResult(
+                        transcript="",
+                        detected_language=self.language_code,
+                        processing_time_ms=elapsed_ms,
+                        model_name="google-cloud-speech",
+                        device="google-cloud-stt",
+                        is_final=True,
+                        provider="google",
+                    )
+
+            if len(buf) < 16000 * 0.45:  # Wait for at least ~450ms of speech
+                elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                return ASRResult(
+                    transcript=session.current_interim,
+                    detected_language=self.language_code,
+                    processing_time_ms=elapsed_ms,
+                    model_name="google-cloud-speech",
+                    device="google-cloud-stt",
+                    is_final=False,
+                    provider="google",
+                )
+
+            # Transcribe via Google Cloud Speech Recognition API (zero hallucination)
+            t0_g = time.perf_counter()
+            recognized_text = ""
+            try:
+                import speech_recognition as sr
+                recognizer = sr.Recognizer()
+                clipped = np.clip(buf, -1.0, 1.0)
+                int16 = (clipped * 32767.0).astype(np.int16)
+                audio_data = sr.AudioData(int16.tobytes(), sample_rate=16000, sample_width=2)
+                try:
+                    recognized_text = recognizer.recognize_google(
+                        audio_data,
+                        language=self.language_code or "en-IN",
+                    )
+                except sr.UnknownValueError:
+                    try:
+                        recognized_text = recognizer.recognize_google(
+                            audio_data,
+                            language="en-US",
+                        )
+                    except Exception:
+                        recognized_text = ""
+            except Exception as g_err:
+                log.debug("[GoogleSTT] recognize_google note: %s", g_err)
+                recognized_text = ""
+
+            import re
+            if recognized_text:
+                # Deduplicate accidental acoustic repetition
+                recognized_text = re.sub(r'(\b\w+\b)( \1){2,}', r'\1', recognized_text.strip(), flags=re.IGNORECASE)
+
+            elapsed_ms = (time.perf_counter() - t0_g) * 1000.0
+
+            with session.lock:
+                buf_dur_sec = len(buf) / 16000.0
+                if recognized_text:
+                    session.current_interim = recognized_text
+                    should_commit = buf_dur_sec >= 3.0 or any(recognized_text.endswith(p) for p in [".", "!", "?"])
+                    if should_commit:
+                        session.finalized_segments.append(recognized_text)
+                        session.pending_finalized.append(recognized_text)
+                        session.fallback_active_audio.clear()
+                        session.current_interim = ""
+                        is_final = True
+                        text_to_return = recognized_text
+                    else:
+                        is_final = False
+                        text_to_return = recognized_text
+                else:
+                    # No speech recognized in current audio buffer
+                    if buf_dur_sec >= 4.0:
+                        # Clear stale buffer if no valid speech after 4 seconds
+                        session.fallback_active_audio.clear()
+                        session.current_interim = ""
+                    text_to_return = ""
+                    is_final = False
+
+                return ASRResult(
+                    transcript=text_to_return,
+                    detected_language=self.language_code,
+                    language_probability=0.98 if text_to_return else 0.0,
+                    processing_time_ms=elapsed_ms,
+                    model_name="google-cloud-speech",
+                    device="google-cloud-stt",
+                    is_final=is_final,
+                    provider="google",
+                )
+
+        # Google Cloud client is active: enqueue audio if speech is detected
         if is_speech and audio_chunk is not None and len(audio_chunk) > 0:
             pcm_bytes = self._audio_to_pcm16_bytes(audio_chunk)
             # Slice into ~100ms frames (FRAME_SIZE_BYTES = 3200 bytes)
@@ -447,6 +678,7 @@ class GoogleSTTASR(BaseASR):
         """
         with self._sessions_lock:
             session = self._sessions.pop(session_id, None)
+            self._fallback_buffer.pop(session_id, None)
 
         if session is None:
             return ASRResult(

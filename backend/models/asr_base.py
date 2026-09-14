@@ -52,10 +52,10 @@ class ASRResult:
     processing_time_ms: float = 0.0
     no_speech_probability: Optional[float] = None
     segments: List[Dict[str, Any]] = field(default_factory=list)
-    model_name: str = "base"
-    device: str = "cpu"
+    model_name: str = "google-cloud-speech"
+    device: str = "cloud"
     is_final: bool = True
-    provider: str = "whisper"
+    provider: str = "google"
 
     def summary(self) -> str:
         lang_info = f"lang={self.detected_language or 'none'}"

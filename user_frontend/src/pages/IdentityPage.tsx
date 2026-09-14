@@ -122,7 +122,7 @@ export default function IdentityPage() {
       {/* Actions */}
       {(status === 'failed' || status === 'unverified' || status === 'unavailable') && (
         <Button variant="primary" fullWidth onClick={() => navigate('/verification')}>
-          Verify Independently
+          View Organisation Incident Protocol
         </Button>
       )}
 

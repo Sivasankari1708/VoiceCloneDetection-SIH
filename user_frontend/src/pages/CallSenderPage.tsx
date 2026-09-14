@@ -404,7 +404,7 @@ export default function CallSenderPage() {
                     </option>
                   </select>
                   <p className="text-[11px] text-slate-500">
-                    High-veracity test file containing synthesized speech. Triggers Member 1 ML synthetic artifacts detection and Whisper ASR.
+                    High-veracity test file containing synthesized speech. Triggers Member 1 ML synthetic artifacts detection and Speech-to-Text ASR.
                   </p>
                 </div>
               )}

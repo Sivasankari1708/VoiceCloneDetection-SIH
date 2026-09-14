@@ -24,16 +24,49 @@ export default function IncomingCallModal() {
         console.info('[IncomingCallModal] Displaying incoming call:', event.data);
         setIncomingCall(event.data);
       } else if (event.type === 'CALL_ENDED') {
-        if (incomingCall && incomingCall.session_id === event.data.session_id) {
-          console.info('[IncomingCallModal] Call ended by caller, dismissing modal.');
-          setIncomingCall(null);
-        }
+        setIncomingCall((curr) => (curr && curr.session_id === event.data.session_id ? null : curr));
       }
     });
 
     return () => {
       unsubscribe();
     };
+  }, [user]);
+
+  // Periodic 2.5s polling fallback to catch ringing calls if WS event was missed or delayed
+  useEffect(() => {
+    if (!user || user.role === 'CALLER' || user.role === 'ATTACKER' || incomingCall) return;
+
+    const checkRingingCalls = async () => {
+      try {
+        const token = localStorage.getItem('voiceshield_token');
+        const res = await fetch(`${config.apiBaseUrl}/api/calls?status=RINGING`, {
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+        if (res.ok) {
+          const calls = await res.json();
+          if (Array.isArray(calls) && calls.length > 0) {
+            const ringing = calls[0];
+            setIncomingCall({
+              session_id: ringing.session_id,
+              caller_name: ringing.caller_name || 'Incoming Call',
+              claimed_speaker_id: ringing.claimed_speaker_id,
+              claimed_org_id: ringing.claimed_org_id,
+              claimed_org_name: ringing.claimed_org_name,
+              status: ringing.status || 'RINGING',
+            });
+          }
+        }
+      } catch {
+        // Ignore network failure
+      }
+    };
+
+    const interval = setInterval(checkRingingCalls, 2500);
+    checkRingingCalls();
+    return () => clearInterval(interval);
   }, [user, incomingCall]);
 
   // The attacker / caller persona MUST NOT see incoming-call recipient UI

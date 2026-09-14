@@ -25,7 +25,6 @@ from backend.models.google_stt_asr import (
     GoogleSTTASR,
     GoogleSTTSessionState,
 )
-from backend.models.whisper_asr import WhisperASR
 
 
 # ── Fixtures & Helpers ─────────────────────────────────────────────────────────
@@ -278,18 +277,19 @@ def test_google_api_exception_during_streaming(dummy_audio: np.ndarray):
 
 
 def test_asr_factory():
-    """Test ASR provider factory instantiation."""
-    # Whisper provider
-    whisper_prov = create_asr_provider("whisper")
-    assert isinstance(whisper_prov, WhisperASR)
-    assert whisper_prov.provider_name == "whisper"
+    """Test ASR provider factory instantiation exclusively returns GoogleSTTASR."""
+    # Default instantiation
+    prov_default = create_asr_provider()
+    assert isinstance(prov_default, GoogleSTTASR)
+    assert prov_default.provider_name == "google"
 
-    # Google provider
+    # Explicit Google provider
     google_prov = create_asr_provider("google", language="en-IN")
     assert isinstance(google_prov, GoogleSTTASR)
     assert google_prov.provider_name == "google"
     assert google_prov.language_code == "en-IN"
 
-    # Invalid provider
-    with pytest.raises(ValueError, match="Unsupported ASR provider"):
-        create_asr_provider("unknown_provider")
+    # Legacy argument compatibility (routes to GoogleSTTASR)
+    legacy_prov = create_asr_provider("whisper")
+    assert isinstance(legacy_prov, GoogleSTTASR)
+    assert legacy_prov.provider_name == "google"

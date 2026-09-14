@@ -61,12 +61,20 @@ class AlertDispatcher:
                     del self._call_sockets[session_id]
             log.info("[AlertDispatcher] Unregistered call WebSocket for session '%s'.", session_id)
 
-    async def send_to_call(self, session_id: str, message: Dict[str, Any]) -> None:
+    async def send_to_call(
+        self,
+        session_id: str,
+        message: Dict[str, Any],
+        exclude_socket: Optional[WebSocket] = None,
+    ) -> None:
         """Send a message (e.g. RISK_UPDATE or USER_SECURITY_ALERT) to an active call session."""
         sockets = set()
         async with self._lock:
             if session_id in self._call_sockets:
                 sockets = set(self._call_sockets[session_id])
+
+        if exclude_socket:
+            sockets.discard(exclude_socket)
 
         if not sockets:
             return

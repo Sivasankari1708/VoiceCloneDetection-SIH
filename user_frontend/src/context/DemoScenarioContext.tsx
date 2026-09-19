@@ -137,7 +137,7 @@ interface DemoScenarioContextType {
 
   // Critical Intervention Flow
   intervention: CriticalInterventionState;
-  startCriticalIntervention: () => void;
+  startCriticalIntervention: (reason?: 'CREDENTIAL_EXPOSURE' | 'CRITICAL') => void;
   cancelIntervention: () => void;
   resetCallToInitial: () => void;
 
@@ -245,9 +245,23 @@ export function DemoScenarioProvider({ children }: { children: ReactNode }) {
     return defaultLang;
   });
 
+  const selectedLanguageRef = useRef(selectedLanguage);
+  useEffect(() => {
+    selectedLanguageRef.current = selectedLanguage;
+  }, [selectedLanguage]);
+
   const setSelectedLanguage = useCallback((opt: MultilingualOption) => {
     setSelectedLanguageState(opt);
+    selectedLanguageRef.current = opt;
     warningAudioService.setLanguage(opt.code || opt.language);
+  }, []);
+
+  // Track all active intervention timers so they can be cleaned up cleanly
+  const interventionTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearInterventionTimers = useCallback(() => {
+    interventionTimersRef.current.forEach((t) => clearTimeout(t));
+    interventionTimersRef.current = [];
   }, []);
 
   const [deviceContext] = useState<DeviceNetworkContext>(INITIAL_DEVICE_CONTEXT);
@@ -421,52 +435,71 @@ export function DemoScenarioProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ─── Critical Intervention Multi-Step Execution (Requirement #11) ───────────
-  const startCriticalIntervention = useCallback(() => {
+  const startCriticalIntervention = useCallback((reason: 'CREDENTIAL_EXPOSURE' | 'CRITICAL' = 'CRITICAL') => {
+    clearInterventionTimers();
+    const activeLang = selectedLanguageRef.current;
+
     setIntervention({
       active: true,
       step: 'critical_detected',
       countdownValue: 3,
-      announcementLanguage: selectedLanguage.language,
-      announcementRegion: selectedLanguage.region,
+      announcementLanguage: activeLang.language,
+      announcementRegion: activeLang.region,
       announcementPlayed: false,
       incidentRef: 'INC-2026-0142',
       simulated: true,
+      reason,
     });
 
     // Step 1 -> Step 2 (Call placed on hold) after 1.2s
-    setTimeout(() => {
+    const t1 = setTimeout(() => {
       setIntervention((prev) => ({ ...prev, step: 'call_held' }));
 
-      // Step 2 -> Step 3 (Security announcement) after 1.5s
-      setTimeout(() => {
-        setIntervention((prev) => ({ ...prev, step: 'security_announcement', announcementPlayed: true }));
-        warningAudioService.playSecurityWarning('CRITICAL', selectedLanguage.code || selectedLanguage.language);
+      // Step 2 -> Step 3 (Security announcement / Warning screen) after 1.5s
+      const t2 = setTimeout(() => {
+        const currentLang = selectedLanguageRef.current;
+        setIntervention((prev) => ({
+          ...prev,
+          step: 'security_announcement',
+          announcementPlayed: true,
+          announcementLanguage: currentLang.language,
+          announcementRegion: currentLang.region,
+        }));
+        // Option 2: Spoken audio plays ONCE strictly during the Step 3 Warning Screen
+        warningAudioService.playSecurityWarning(reason, currentLang.code || currentLang.language, true);
 
         // Step 3 -> Step 4 (Countdown 3 -> 2 -> 1) after 2.5s
-        setTimeout(() => {
+        const t3 = setTimeout(() => {
           setIntervention((prev) => ({ ...prev, step: 'countdown', countdownValue: 3 }));
 
-          setTimeout(() => {
+          const t4 = setTimeout(() => {
             setIntervention((prev) => ({ ...prev, countdownValue: 2 }));
 
-            setTimeout(() => {
+            const t5 = setTimeout(() => {
               setIntervention((prev) => ({ ...prev, countdownValue: 1 }));
 
               // Step 4 -> Step 5 (Call terminated - SIMULATION) after 1s
-              setTimeout(() => {
+              const t6 = setTimeout(() => {
                 setIntervention((prev) => ({ ...prev, step: 'terminated' }));
 
                 // Step 5 -> Step 6 (SOC Incident Created) after 1.2s
-                setTimeout(() => {
+                const t7 = setTimeout(() => {
                   setIntervention((prev) => ({ ...prev, step: 'incident_created' }));
                 }, 1200);
+                interventionTimersRef.current.push(t7);
               }, 1000);
+              interventionTimersRef.current.push(t6);
             }, 1000);
+            interventionTimersRef.current.push(t5);
           }, 1000);
+          interventionTimersRef.current.push(t4);
         }, 2500);
+        interventionTimersRef.current.push(t3);
       }, 1500);
+      interventionTimersRef.current.push(t2);
     }, 1200);
-  }, [selectedLanguage]);
+    interventionTimersRef.current.push(t1);
+  }, [clearInterventionTimers]);
 
   const addTranscriptLine = useCallback((speaker: 'caller' | 'employee', text: string) => {
     const analysis = analyzeSensitiveSolicitation(text, speaker);
@@ -496,24 +529,26 @@ export function DemoScenarioProvider({ children }: { children: ReactNode }) {
       addSensitiveSignal(cat, text);
       setCurrentRiskLevel(analysis.severity);
       if (analysis.severity === 'Critical') {
-        startCriticalIntervention();
+        startCriticalIntervention('CREDENTIAL_EXPOSURE');
       }
     }
   }, [addSensitiveSignal, setCurrentRiskLevel, startCriticalIntervention]);
 
   const cancelIntervention = useCallback(() => {
+    clearInterventionTimers();
     warningAudioService.stopWarning();
+    const currentLang = selectedLanguageRef.current;
     setIntervention({
       active: false,
       step: 'idle',
       countdownValue: 3,
-      announcementLanguage: selectedLanguage.language,
-      announcementRegion: selectedLanguage.region,
+      announcementLanguage: currentLang.language,
+      announcementRegion: currentLang.region,
       announcementPlayed: false,
       incidentRef: 'INC-2026-0142',
       simulated: true,
     });
-  }, [selectedLanguage]);
+  }, [clearInterventionTimers]);
 
   const resetCallToInitial = useCallback(() => {
     setCurrentRisk(PROGRESSIVE_RISK_STATES.Safe);
@@ -893,7 +928,6 @@ export function DemoScenarioProvider({ children }: { children: ReactNode }) {
       } else if (evt.type === 'USER_SECURITY_ALERT' && evt.data) {
         setCurrentRiskLevel(evt.data.severity || 'Critical');
         startCriticalIntervention();
-        warningAudioService.playSecurityWarning('CRITICAL', selectedLanguage.code || selectedLanguage.language);
       } else if (evt.type === 'CALL_ENDED') {
         stopIncomingCallChime();
         warningAudioService.stopWarning();

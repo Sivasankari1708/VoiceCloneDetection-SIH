@@ -127,7 +127,7 @@ export default function CriticalInterventionModal({
               </div>
               <div className="text-sm font-bold text-blue-950">Active Security Announcement (Spoken Warning)</div>
               <div className="mt-2 text-xs font-medium text-slate-800 bg-white/90 p-3 rounded-lg border border-blue-100 italic leading-relaxed">
-                “{warningAudioService.getWarningScript('CRITICAL', selectedLanguage.code || selectedLanguage.language)}”
+                “{warningAudioService.getWarningScript(intervention.reason || 'CRITICAL', selectedLanguage.code || selectedLanguage.language)}”
               </div>
               <div className="mt-3 flex items-center justify-center gap-3 text-[11px] text-blue-700 flex-wrap">
                 <span>Target Language: <strong>{selectedLanguage.language} ({selectedLanguage.code})</strong></span>
@@ -141,7 +141,7 @@ export default function CriticalInterventionModal({
                 <button
                   type="button"
                   onClick={() => {
-                    warningAudioService.playSecurityWarning('CRITICAL', selectedLanguage.code || selectedLanguage.language, true);
+                    warningAudioService.playSecurityWarning(intervention.reason || 'CRITICAL', selectedLanguage.code || selectedLanguage.language, true);
                   }}
                   className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white transition flex items-center gap-1.5 shadow-xs cursor-pointer"
                   title="Manual fallback to speak warning aloud"

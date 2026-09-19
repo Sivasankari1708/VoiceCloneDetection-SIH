@@ -90,6 +90,7 @@ export interface CriticalInterventionState {
   announcementPlayed: boolean;
   incidentRef?: string;
   simulated: true;
+  reason?: 'CREDENTIAL_EXPOSURE' | 'CRITICAL';
 }
 
 // ─── Multilingual Warning (Requirement #12) ──────────────────────────────────

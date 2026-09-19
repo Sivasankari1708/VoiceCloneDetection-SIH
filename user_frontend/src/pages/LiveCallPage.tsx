@@ -119,23 +119,22 @@ export default function LiveCallPage() {
   useEffect(() => {
     if ((isCritical || hasCredentialExposure || hasCallerSensitiveRequest) && !intervention.active) {
       const timer = setTimeout(() => {
-        startCriticalIntervention();
+        startCriticalIntervention(hasCredentialExposure || hasCallerSensitiveRequest ? 'CREDENTIAL_EXPOSURE' : 'CRITICAL');
       }, 1000);
       return () => clearTimeout(timer);
     }
   }, [isCritical, hasCredentialExposure, hasCallerSensitiveRequest, intervention.active, startCriticalIntervention]);
 
-  // Dynamically play spoken warning in user's selected language when threat occurs during active call
+  // Dynamically play spoken warning in user's selected language during active call.
+  // Option 2: For Critical clone attacks and credential disclosures, spoken audio plays strictly ONCE
+  // during Step 3 of the Critical Intervention workflow (the Warning screen), avoiding duplicate premature audio on disclosure.
   useEffect(() => {
     if (!hasActiveCall) return;
-    if (hasCredentialExposure || hasCallerSensitiveRequest) {
-      warningAudioService.playSecurityWarning('CREDENTIAL_EXPOSURE', selectedLanguage.code || selectedLanguage.language);
-    } else if (isCritical) {
-      warningAudioService.playSecurityWarning('CRITICAL', selectedLanguage.code || selectedLanguage.language);
-    } else if (isHigh) {
+    if (intervention.active || isCritical || hasCredentialExposure || hasCallerSensitiveRequest) return;
+    if (isHigh) {
       warningAudioService.playSecurityWarning('HIGH', selectedLanguage.code || selectedLanguage.language);
     }
-  }, [hasActiveCall, isCritical, isHigh, hasCredentialExposure, hasCallerSensitiveRequest, selectedLanguage]);
+  }, [hasActiveCall, intervention.active, isCritical, isHigh, hasCredentialExposure, hasCallerSensitiveRequest, selectedLanguage]);
 
   // Live microphone capture & continuous Google Cloud STT recognition for Employee/User (Only when Live Call active)
   useEffect(() => {

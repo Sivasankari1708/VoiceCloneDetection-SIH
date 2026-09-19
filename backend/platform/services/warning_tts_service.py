@@ -30,10 +30,13 @@ import os
 import struct
 import wave
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from dotenv import load_dotenv
 
 from backend.utils.logger import get_logger
 
+load_dotenv()
 log = get_logger("warning_tts_service")
 
 
@@ -265,10 +268,26 @@ def normalize_language_code(code_or_name: str) -> str:
     return "en-IN"
 
 
+# gTTS language and TLD configuration for the 8 Indian languages
+GTTS_LANGUAGE_MAP: Dict[str, Tuple[str, str]] = {
+    "ta-IN": ("ta", "com"),         # Tamil
+    "hi-IN": ("hi", "com"),         # Hindi
+    "en-IN": ("en", "co.in"),       # English (India) - authentic Indian accent
+    "te-IN": ("te", "com"),         # Telugu
+    "ml-IN": ("ml", "com"),         # Malayalam
+    "kn-IN": ("kn", "com"),         # Kannada
+    "bn-IN": ("bn", "com"),         # Bengali
+    "mr-IN": ("mr", "com"),         # Marathi
+}
+
+
 class WarningTTSService:
     """
-    Singleton service that synthesizes warning audio using Google Cloud Text-to-Speech,
-    with an in-memory & file cache to eliminate duplicate synthesis overhead.
+    Singleton service that synthesizes spoken warning audio using:
+      1. Google Cloud Text-to-Speech API (when credentials / API key provided)
+      2. Google Text-to-Speech (gTTS) engine (credential-free official Google TTS)
+      3. Resilient security tone chime (last-resort zero-crash fallback)
+    with an in-memory cache to eliminate duplicate synthesis overhead.
     """
 
     _instance: Optional[WarningTTSService] = None
@@ -276,7 +295,8 @@ class WarningTTSService:
     def __init__(self):
         self._client: Optional[Any] = None
         self._is_available: Optional[bool] = None
-        self._memory_cache: Dict[str, bytes] = {}
+        # Cache maps cache_key -> dict containing bytes, content_type, provider, voice_name
+        self._memory_cache: Dict[str, Dict[str, Any]] = {}
 
     @classmethod
     def get_instance(cls) -> WarningTTSService:
@@ -285,22 +305,30 @@ class WarningTTSService:
         return cls._instance
 
     def _get_client(self) -> Optional[Any]:
-        """Lazily initialize Google Cloud TextToSpeechClient."""
+        """Lazily initialize Google Cloud TextToSpeechClient if credentials exist."""
         if self._client is not None:
             return self._client
         if self._is_available is False:
             return None
 
+        cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        api_key = (
+            os.getenv("GOOGLE_API_KEY")
+            or os.getenv("GOOGLE_CLOUD_API_KEY")
+            or os.getenv("TTS_API_KEY")
+        )
+        adc_path = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
+        has_adc = os.path.isfile(adc_path)
+
+        # Only attempt to initialize Google Cloud client if credentials explicitly exist
+        if not (cred_path and os.path.isfile(cred_path)) and not api_key and not has_adc:
+            self._is_available = False
+            log.info("[WarningTTS] No Google Cloud credentials or API key configured. Utilizing Google Text-to-Speech (gTTS).")
+            return None
+
         try:
             from google.cloud import texttospeech_v1 as texttospeech
             from google.api_core.client_options import ClientOptions
-
-            cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-            api_key = (
-                os.getenv("GOOGLE_API_KEY")
-                or os.getenv("GOOGLE_CLOUD_API_KEY")
-                or os.getenv("TTS_API_KEY")
-            )
 
             if cred_path and os.path.isfile(cred_path):
                 self._client = texttospeech.TextToSpeechClient.from_service_account_file(cred_path)
@@ -309,7 +337,7 @@ class WarningTTSService:
                 self._client = texttospeech.TextToSpeechClient(
                     client_options=ClientOptions(api_key=api_key)
                 )
-                log.info("[WarningTTS] Authenticated using Google API Key.")
+                log.info("[WarningTTS] Authenticated using Google Cloud API Key.")
             else:
                 self._client = texttospeech.TextToSpeechClient()
                 log.info("[WarningTTS] Authenticated using Application Default Credentials (ADC).")
@@ -319,11 +347,35 @@ class WarningTTSService:
         except Exception as exc:
             self._is_available = False
             log.warning(
-                "[WarningTTS] Google Cloud TextToSpeechClient unavailable (%s). "
-                "Resilient synthetic audio fallback will be used.",
+                "[WarningTTS] Google Cloud TextToSpeechClient initialization failed (%s). "
+                "Will use Google Text-to-Speech (gTTS) engine.",
                 exc,
             )
             return None
+
+    def _synthesize_with_gtts(self, norm_code: str, text: str) -> Optional[bytes]:
+        """
+        Synthesize spoken warning using Google Text-to-Speech (gTTS).
+        Generates genuine Google TTS audio for all 8 Indian languages without credentials.
+        """
+        try:
+            from gtts import gTTS
+
+            lang_code, tld = GTTS_LANGUAGE_MAP.get(norm_code, ("en", "com"))
+            tts = gTTS(text=text, lang=lang_code, tld=tld, slow=False)
+            fp = io.BytesIO()
+            tts.write_to_fp(fp)
+            audio_bytes = fp.getvalue()
+            if audio_bytes and len(audio_bytes) > 200:
+                log.info(
+                    "[WarningTTS] Successfully synthesized %d bytes using Google TTS (gTTS) for '%s'",
+                    len(audio_bytes),
+                    norm_code,
+                )
+                return audio_bytes
+        except Exception as exc:
+            log.warning("[WarningTTS] gTTS synthesis failed for '%s': %s", norm_code, exc)
+        return None
 
     def get_warning_text(self, language_code: str, event_type: str) -> str:
         """Get the authoritative localized script text for a security event."""
@@ -354,23 +406,23 @@ class WarningTTSService:
         cfg = LANGUAGE_CATALOG.get(norm_code, LANGUAGE_CATALOG["en-IN"])
         text = custom_text.strip() if custom_text else self.get_warning_text(norm_code, event_type)
 
-        # Cache key based on text, language, and voice
+        # Check in-memory cache
         cache_key = hashlib.md5(f"{norm_code}:{cfg.preferred_voice}:{audio_format}:{text}".encode()).hexdigest()
         if cache_key in self._memory_cache:
-            audio_bytes = self._memory_cache[cache_key]
-            content_type = "audio/mpeg" if audio_format.upper() == "MP3" else "audio/wav"
+            cached = self._memory_cache[cache_key]
             return {
                 "success": True,
-                "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
-                "audio_bytes": audio_bytes,
-                "content_type": content_type,
+                "audio_base64": base64.b64encode(cached["bytes"]).decode("ascii"),
+                "audio_bytes": cached["bytes"],
+                "content_type": cached["content_type"],
                 "language_code": norm_code,
                 "language_name": cfg.name,
-                "voice_name": cfg.preferred_voice,
+                "voice_name": cached["voice_name"],
                 "text": text,
-                "provider": "google-cloud-tts (cached)",
+                "provider": f"{cached['provider']} (cached)",
             }
 
+        # Tier 1: Google Cloud Text-to-Speech API
         client = self._get_client()
         if client:
             try:
@@ -397,7 +449,7 @@ class WarningTTSService:
 
                 audio_config = texttospeech.AudioConfig(
                     audio_encoding=encoding,
-                    speaking_rate=0.96,  # Slightly clearer and authoritative pacing for security notices
+                    speaking_rate=0.96,  # Clear, authoritative pacing for security notices
                     pitch=0.0,
                 )
 
@@ -409,11 +461,17 @@ class WarningTTSService:
                 )
 
                 audio_bytes = response.audio_content
-                self._memory_cache[cache_key] = audio_bytes
                 content_type = "audio/mpeg" if audio_format.upper() == "MP3" else "audio/wav"
 
+                self._memory_cache[cache_key] = {
+                    "bytes": audio_bytes,
+                    "content_type": content_type,
+                    "provider": "google-cloud-tts",
+                    "voice_name": cfg.preferred_voice,
+                }
+
                 log.info(
-                    "[WarningTTS] Synthesized %d bytes for '%s' using voice '%s'",
+                    "[WarningTTS] Google Cloud TTS synthesized %d bytes for '%s' using voice '%s'",
                     len(audio_bytes),
                     norm_code,
                     cfg.preferred_voice,
@@ -431,11 +489,34 @@ class WarningTTSService:
                     "provider": "google-cloud-tts",
                 }
             except Exception as exc:
-                log.warning("[WarningTTS] Google Cloud TTS synthesis failed: %s; using resilient fallback.", exc)
+                log.warning("[WarningTTS] Google Cloud TTS synthesis failed: %s; falling back to gTTS.", exc)
 
-        # Fallback: Generate an audible, valid security chime audio wave
-        audio_bytes = self._generate_security_fallback_audio(duration_sec=3.0)
-        self._memory_cache[cache_key] = audio_bytes
+        # Tier 2: Google Text-to-Speech (gTTS)
+        gtts_bytes = self._synthesize_with_gtts(norm_code, text)
+        if gtts_bytes:
+            content_type = "audio/mpeg"
+            voice_name = f"{cfg.name}-Google-TTS"
+            self._memory_cache[cache_key] = {
+                "bytes": gtts_bytes,
+                "content_type": content_type,
+                "provider": "google-tts",
+                "voice_name": voice_name,
+            }
+            return {
+                "success": True,
+                "audio_base64": base64.b64encode(gtts_bytes).decode("ascii"),
+                "audio_bytes": gtts_bytes,
+                "content_type": content_type,
+                "language_code": norm_code,
+                "language_name": cfg.name,
+                "voice_name": voice_name,
+                "text": text,
+                "provider": "google-tts",
+            }
+
+        # Tier 3: Resilient Security Tone Chime (last resort fallback, NOT cached as speech)
+        log.warning("[WarningTTS] Speech engines unavailable; emitting resilient alert chime.")
+        audio_bytes = self._generate_security_fallback_audio(duration_sec=2.5)
 
         return {
             "success": True,

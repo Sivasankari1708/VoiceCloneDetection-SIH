@@ -188,6 +188,10 @@ class WarningAudioService {
   private provider = 'idle';
   private error: string | null = null;
 
+  // Single-audio generation lock & abort controller to prevent overlapping audio
+  private currentPlayId = 0;
+  private activeAbortController: AbortController | null = null;
+
   private listeners: Set<StateListener> = new Set();
   private duplicateCooldownMs = 12000; // 12 seconds cooldown per event type to prevent echoes
 
@@ -255,8 +259,8 @@ class WarningAudioService {
     this.emitState();
     console.info(`[WarningAudio] Language set to: ${lang.name} (${lang.code})`);
 
-    // If currently speaking or warning active and language changed, immediately re-synthesize in new language
-    if (prevCode !== lang.code && this.lastPlayedEventType) {
+    // Only switch spoken warning dynamically if currently actively speaking
+    if (prevCode !== lang.code && this.isSpeaking && this.lastPlayedEventType) {
       this.playSecurityWarning(this.lastPlayedEventType, lang.code, true);
     }
   }
@@ -301,6 +305,7 @@ class WarningAudioService {
 
   /**
    * Plays the localized security warning during an active call.
+   * Strictly enforces that ONLY ONE audio source/language plays at any time.
    *
    * @param eventType 'CRITICAL' | 'CREDENTIAL_EXPOSURE' | 'HIGH'
    * @param languageCode Optional language code override (e.g. 'ta-IN')
@@ -312,11 +317,13 @@ class WarningAudioService {
     forceReplay = false
   ): Promise<boolean> {
     const targetLang = findLanguage(languageCode || this.activeLanguageCode);
+    // Keep active language strictly in sync with user's selection
+    this.activeLanguageCode = targetLang.code;
+
     const now = Date.now();
     const isSameLanguage = this.lastPlayedLanguageCode === targetLang.code;
 
     // 1. Deduplication & Cooldown Check
-    // If the language changed, allow immediate playback in the newly selected language
     if (!forceReplay && isSameLanguage) {
       if (this.isSpeaking) {
         console.warn(`[WarningAudio] Duplicate warning suppressed: Audio already playing in ${targetLang.code}.`);
@@ -332,8 +339,10 @@ class WarningAudioService {
       }
     }
 
-    // Stop any current playback
+    // Assign unique incrementing play ID and abort any in-flight requests
+    const playId = ++this.currentPlayId;
     this.stopWarning();
+    this.currentPlayId = playId; // Re-assign so this session remains authoritative
 
     const scriptText = this.getWarningScript(eventType, targetLang.code);
     this.currentWarningText = scriptText;
@@ -345,9 +354,12 @@ class WarningAudioService {
     this.provider = 'requesting-backend-tts';
     this.emitState();
 
-    console.info(`[WarningAudio] Initiating dynamic warning in ${targetLang.name} (${targetLang.code}) for event ${eventType}...`);
+    console.info(`[WarningAudio] Initiating dynamic warning in ${targetLang.name} (${targetLang.code}) [playId=${playId}] for event ${eventType}...`);
 
-    // 2. Fetch synthesized audio from secure backend Google Cloud TTS endpoint
+    const abortCtrl = new AbortController();
+    this.activeAbortController = abortCtrl;
+
+    // 2. Fetch synthesized audio from secure backend Google Cloud / gTTS endpoint
     try {
       const apiBase = getApiBaseUrl();
       const response = await fetch(`${apiBase}/api/tts/generate`, {
@@ -355,6 +367,7 @@ class WarningAudioService {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: abortCtrl.signal,
         body: JSON.stringify({
           language_code: targetLang.code,
           event_type: eventType,
@@ -362,6 +375,12 @@ class WarningAudioService {
           audio_format: 'MP3',
         }),
       });
+
+      // If a newer warning or language selection was made while awaiting fetch, discard!
+      if (this.currentPlayId !== playId) {
+        console.info(`[WarningAudio] Stale TTS response discarded for ${targetLang.code} (superseded by playId=${this.currentPlayId}).`);
+        return false;
+      }
 
       if (!response.ok) {
         throw new Error(`Backend TTS responded with status ${response.status}`);
@@ -372,37 +391,67 @@ class WarningAudioService {
         throw new Error('Backend TTS returned empty audio payload');
       }
 
+      if (this.currentPlayId !== playId) {
+        return false;
+      }
+
       this.provider = data.provider || 'google-cloud-tts';
       this.emitState();
 
-      // 3. Play audio through browser Audio element
+      // If backend only generated a tone chime (e.g. offline/no-speech fallback),
+      // attempt browser Web Speech API first so the user hears an actual spoken warning
+      if (data.provider === 'resilient-fallback-tone') {
+        console.warn('[WarningAudio] Backend provided tone fallback. Attempting browser speech synthesis for vocal warning.');
+        const spoke = await this.playFallbackSpeechSynthesis(scriptText, targetLang, playId);
+        if (spoke) {
+          return true;
+        }
+      }
+
+      if (this.currentPlayId !== playId) {
+        return false;
+      }
+
+      // 3. Play audio through single browser Audio element
       const audioUrl = `data:${data.content_type || 'audio/mpeg'};base64,${data.audio_base64}`;
       const audio = new Audio(audioUrl);
       this.currentAudio = audio;
       audio.volume = 1.0;
 
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolve) => {
         audio.onended = () => {
-          this.isSpeaking = false;
-          this.currentAudio = null;
-          this.emitState();
-          console.info('[WarningAudio] Spoken warning completed.');
+          if (this.currentPlayId === playId) {
+            this.isSpeaking = false;
+            this.currentAudio = null;
+            this.emitState();
+            console.info(`[WarningAudio] Spoken warning in ${targetLang.name} (${targetLang.code}) completed.`);
+          }
           resolve();
         };
         audio.onerror = (e) => {
-          console.warn('[WarningAudio] Audio element playback error:', e);
-          reject(e);
+          if (this.currentPlayId === playId) {
+            console.warn('[WarningAudio] Audio element playback error:', e);
+          }
+          resolve();
         };
         audio.play().catch((playErr) => {
-          console.warn('[WarningAudio] audio.play() rejected (autoplay lock?):', playErr);
-          reject(playErr);
+          if (this.currentPlayId === playId) {
+            console.warn('[WarningAudio] audio.play() rejected (autoplay lock?):', playErr);
+          }
+          resolve();
         });
       });
 
       return true;
     } catch (ttsError) {
+      if (this.currentPlayId !== playId) {
+        return false;
+      }
+      if (ttsError instanceof Error && ttsError.name === 'AbortError') {
+        return false;
+      }
       console.warn('[WarningAudio] Backend TTS playback failed; activating fallback speech synthesis:', ttsError);
-      return this.playFallbackSpeechSynthesis(scriptText, targetLang);
+      return this.playFallbackSpeechSynthesis(scriptText, targetLang, playId);
     }
   }
 
@@ -410,14 +459,21 @@ class WarningAudioService {
    * Resilient fallback using browser Web Speech API (window.speechSynthesis)
    * if backend TTS is unreachable or offline.
    */
-  private playFallbackSpeechSynthesis(text: string, lang: SupportedLanguage): Promise<boolean> {
+  private playFallbackSpeechSynthesis(text: string, lang: SupportedLanguage, playId: number): Promise<boolean> {
     return new Promise((resolve) => {
+      if (this.currentPlayId !== playId) {
+        resolve(false);
+        return;
+      }
+
       if (!('speechSynthesis' in window)) {
         this.playFallbackAlertChime();
-        this.isSpeaking = false;
-        this.provider = 'resilient-chime-fallback';
-        this.error = 'Speech synthesis unsupported in this browser environment; security alert chime played.';
-        this.emitState();
+        if (this.currentPlayId === playId) {
+          this.isSpeaking = false;
+          this.provider = 'resilient-chime-fallback';
+          this.error = 'Speech synthesis unsupported in this browser environment; security alert chime played.';
+          this.emitState();
+        }
         resolve(true);
         return;
       }
@@ -425,7 +481,10 @@ class WarningAudioService {
       this.provider = 'browser-speech-fallback';
       this.emitState();
 
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
+
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = lang.code;
       utterance.rate = 0.95;
@@ -441,19 +500,23 @@ class WarningAudioService {
       }
 
       utterance.onend = () => {
-        this.isSpeaking = false;
-        this.emitState();
-        console.info('[WarningAudio] Fallback spoken warning completed.');
+        if (this.currentPlayId === playId) {
+          this.isSpeaking = false;
+          this.emitState();
+          console.info(`[WarningAudio] Fallback spoken warning in ${lang.name} completed.`);
+        }
         resolve(true);
       };
 
       utterance.onerror = (err) => {
-        console.warn('[WarningAudio] Fallback speechSynthesis error:', err);
-        this.playFallbackAlertChime();
-        this.isSpeaking = false;
-        this.provider = 'resilient-chime-fallback';
-        this.error = 'Speech synthesis failed; security chime played.';
-        this.emitState();
+        if (this.currentPlayId === playId) {
+          console.warn('[WarningAudio] Fallback speechSynthesis error:', err);
+          this.playFallbackAlertChime();
+          this.isSpeaking = false;
+          this.provider = 'resilient-chime-fallback';
+          this.error = 'Speech synthesis failed; security chime played.';
+          this.emitState();
+        }
         resolve(true);
       };
 
@@ -492,13 +555,26 @@ class WarningAudioService {
   }
 
   /**
-   * Immediately stops any currently playing audio warning.
+   * Immediately stops any currently playing audio warning and cancels any pending requests.
    */
   public stopWarning(): void {
+    // Invalidate any ongoing or pending playback ID
+    this.currentPlayId++;
+
+    if (this.activeAbortController) {
+      try {
+        this.activeAbortController.abort();
+      } catch {}
+      this.activeAbortController = null;
+    }
+
     if (this.currentAudio) {
       try {
         this.currentAudio.pause();
         this.currentAudio.currentTime = 0;
+        this.currentAudio.src = '';
+        this.currentAudio.onended = null;
+        this.currentAudio.onerror = null;
       } catch {}
       this.currentAudio = null;
     }
@@ -508,6 +584,7 @@ class WarningAudioService {
       } catch {}
     }
     this.isSpeaking = false;
+    this.provider = 'idle';
     this.emitState();
   }
 }

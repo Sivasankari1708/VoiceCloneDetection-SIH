@@ -9,41 +9,47 @@ export default {
     extend: {
       colors: {
         soc: {
-          bg: '#090D16',         // Deepest background
-          card: '#0F172A',       // Panel/card background
-          cardHover: '#131D36',  // Panel hover
-          border: '#1E293B',     // Subtle structural border
-          borderLight: '#334155',// Active/focused border
-          muted: '#64748B',      // Inactive/secondary text
-          text: '#F1F5F9',       // Primary high-contrast text
-          textSecondary: '#94A3B8', // Regular body text
-          accent: '#38BDF8',     // Technical cyan/sky accent
-          accentHover: '#0EA5E9',
+          bg: '#F8FAFC',            // Crisp light enterprise background
+          bgSubtle: '#F0F4F8',      // Very light blue-grey background
+          card: '#FFFFFF',          // Pure white frosted cards
+          cardHover: '#F8FAFC',     // Card hover state
+          border: '#E2E8F0',        // Soft subtle border
+          borderLight: '#CBD5E1',   // Focused/hover border
+          muted: '#64748B',         // Cool grey secondary text
+          text: '#0F172A',          // Dark blue/slate primary text
+          textSecondary: '#334155', // Regular body text
+          accent: '#2563EB',        // Trustworthy corporate blue
+          accentHover: '#1D4ED8',
+          accentLight: '#EFF6FF',   // Very light blue tint
         },
         severity: {
-          critical: '#EF4444',
-          criticalBg: '#450A0A',
-          criticalBorder: '#991B1B',
-          high: '#F97316',
-          highBg: '#431407',
-          highBorder: '#9A3412',
-          medium: '#F59E0B',
-          mediumBg: '#451A03',
-          mediumBorder: '#92400E',
-          low: '#3B82F6',
-          lowBg: '#172554',
-          lowBorder: '#1E40AF',
-          safe: '#10B981',
-          safeBg: '#022C22',
-          safeBorder: '#065F46',
+          critical: '#DC2626',
+          criticalBg: 'rgba(239, 68, 68, 0.08)',
+          criticalBorder: '#FCA5A5',
+          high: '#EA580C',
+          highBg: 'rgba(234, 88, 12, 0.08)',
+          highBorder: '#FDBA74',
+          medium: '#D97706',
+          mediumBg: 'rgba(217, 119, 6, 0.08)',
+          mediumBorder: '#FCD34D',
+          low: '#2563EB',
+          lowBg: 'rgba(37, 99, 235, 0.08)',
+          lowBorder: '#BFDBFE',
+          safe: '#059669',
+          safeBg: 'rgba(16, 185, 129, 0.08)',
+          safeBorder: '#A7F3D0',
         }
       },
       fontFamily: {
-        mono: ['"JetBrains Mono"', '"Fira Code"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
       fontSize: {
         '2xs': '0.65rem',
+      },
+      boxShadow: {
+        'enterprise': '0 1px 3px 0 rgba(15, 23, 42, 0.05), 0 1px 2px -1px rgba(15, 23, 42, 0.05)',
+        'enterprise-md': '0 4px 6px -1px rgba(15, 23, 42, 0.07), 0 2px 4px -2px rgba(15, 23, 42, 0.05)',
       }
     },
   },

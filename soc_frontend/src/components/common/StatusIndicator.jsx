@@ -2,47 +2,48 @@
 import React from 'react';
 
 export function StatusIndicator({ status, label, showLabel = true, pulse = true }) {
-  let color = 'bg-emerald-500';
-  let textColor = 'text-emerald-400';
+  let dotColor = 'bg-emerald-500';
+  let textColor = 'text-emerald-700';
   let displayLabel = label || status;
 
   switch (status?.toUpperCase()) {
     case 'OPERATIONAL':
     case 'LIVE':
     case 'ONLINE':
-      color = 'bg-emerald-500';
-      textColor = 'text-emerald-400';
+      dotColor = 'bg-emerald-500';
+      textColor = 'text-emerald-700';
       break;
     case 'RECONNECTING':
     case 'WARNING':
     case 'DEGRADED':
-      color = 'bg-amber-500';
-      textColor = 'text-amber-400';
+      dotColor = 'bg-amber-500';
+      textColor = 'text-amber-800';
       break;
     case 'CRITICAL':
     case 'DISCONNECTED':
     case 'OFFLINE':
-      color = 'bg-red-500';
-      textColor = 'text-red-400';
+      dotColor = 'bg-red-500';
+      textColor = 'text-red-700';
       break;
     default:
-      color = 'bg-slate-400';
-      textColor = 'text-slate-400';
+      dotColor = 'bg-slate-400';
+      textColor = 'text-slate-600';
   }
 
   return (
     <div className="inline-flex items-center gap-2">
       <span className="relative flex h-2 w-2">
         {pulse && (
-          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${color} opacity-75`} />
+          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${dotColor} opacity-75`} />
         )}
-        <span className={`relative inline-flex rounded-full h-2 w-2 ${color}`} />
+        <span className={`relative inline-flex rounded-full h-2 w-2 ${dotColor}`} />
       </span>
       {showLabel && (
-        <span className={`font-mono text-xs uppercase tracking-wider font-semibold ${textColor}`}>
+        <span className={`font-sans text-xs uppercase tracking-wider font-semibold ${textColor}`}>
           {displayLabel}
         </span>
       )}
     </div>
   );
 }
+

@@ -34,63 +34,57 @@ export function KPICards({ kpis = {}, incidents = [] }) {
     {
       label: 'ACTIVE CRITICAL',
       value: activeCritical,
-      trend: 'Active critical incidents',
-      color: 'text-red-400',
-      bg: 'bg-red-950/20',
-      border: 'border-red-900/40',
+      trend: 'Threats requiring intervention',
+      color: activeCritical > 0 ? 'text-red-700' : 'text-slate-700',
+      bg: activeCritical > 0 ? 'bg-red-50/80 border-red-200' : 'bg-white border-slate-200/90',
       icon: AlertOctagon,
-      iconColor: 'text-red-500',
+      iconColor: activeCritical > 0 ? 'text-red-600' : 'text-slate-400',
       statusPulse: activeCritical > 0
     },
     {
-      label: 'HIGH-RISK EVENTS',
+      label: 'HIGH-RISK CALLS',
       value: highRisk,
-      trend: 'Based on incident risk',
-      color: 'text-orange-400',
-      bg: 'bg-orange-950/20',
-      border: 'border-orange-900/40',
+      trend: 'Elevated impersonation signals',
+      color: 'text-slate-900',
+      bg: 'bg-white border-slate-200/90',
       icon: ShieldAlert,
-      iconColor: 'text-orange-500'
+      iconColor: 'text-amber-500'
     },
     {
-      label: 'UNDER ANALYSIS',
+      label: 'MONITORED STREAMS',
       value: kpis.underAnalysis ?? 0,
-      trend: 'Active analysis sessions',
-      color: 'text-soc-accent',
-      bg: 'bg-sky-950/20',
-      border: 'border-sky-900/40',
+      trend: 'Active protected sessions',
+      color: 'text-blue-700',
+      bg: 'bg-blue-50/50 border-blue-200/70',
       icon: Radio,
-      iconColor: 'text-soc-accent'
+      iconColor: 'text-blue-600'
     },
     {
       label: 'OPEN INVESTIGATIONS',
       value: openInvestigations,
-      trend: 'Open incident investigations',
-      color: 'text-amber-400',
-      bg: 'bg-amber-950/20',
-      border: 'border-amber-900/40',
+      trend: 'Cases in triage or review',
+      color: 'text-slate-900',
+      bg: 'bg-white border-slate-200/90',
       icon: SearchCode,
-      iconColor: 'text-amber-500'
+      iconColor: 'text-slate-400'
     },
     {
       label: 'INCIDENTS TODAY',
       value: kpis.incidentsToday ?? 0,
-      trend: '24h incident count',
-      color: 'text-slate-200',
-      bg: 'bg-slate-900/40',
-      border: 'border-soc-border',
+      trend: '24-hour recorded events',
+      color: 'text-slate-900',
+      bg: 'bg-white border-slate-200/90',
       icon: Calendar,
       iconColor: 'text-slate-400'
     },
     {
       label: 'PROTECTED IDENTITIES',
       value: kpis.protectedIdentities ?? 0,
-      trend: 'Enrolled voice identities',
-      color: 'text-emerald-400',
-      bg: 'bg-emerald-950/20',
-      border: 'border-emerald-900/40',
+      trend: 'Enrolled organizational leaders',
+      color: 'text-emerald-700',
+      bg: 'bg-white border-slate-200/90',
       icon: ShieldCheck,
-      iconColor: 'text-emerald-500'
+      iconColor: 'text-emerald-600'
     }
   ];
 
@@ -102,20 +96,18 @@ export function KPICards({ kpis = {}, incidents = [] }) {
         return (
           <div
             key={i}
-            className={`p-3.5 rounded-md border ${card.border} ${card.bg} relative overflow-hidden flex flex-col justify-between`}
+            className={`p-4 rounded-xl border ${card.bg} shadow-xs relative overflow-hidden flex flex-col justify-between transition-all hover:shadow-sm`}
           >
             <div className="flex items-center justify-between">
-              <span className="font-mono text-2xs font-semibold uppercase tracking-wider text-slate-400">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                 {card.label}
               </span>
 
               <Icon className={`w-4 h-4 ${card.iconColor}`} />
             </div>
 
-            <div className="mt-2 flex items-baseline gap-2">
-              <span
-                className={`text-2xl font-mono font-bold tracking-tight ${card.color}`}
-              >
+            <div className="mt-3 flex items-baseline gap-2">
+              <span className={`text-2xl font-black tracking-tight ${card.color}`}>
                 {card.value}
               </span>
 
@@ -127,7 +119,7 @@ export function KPICards({ kpis = {}, incidents = [] }) {
               )}
             </div>
 
-            <div className="mt-1 text-2xs font-mono text-slate-500 truncate">
+            <div className="mt-1 text-[11px] text-slate-400 truncate">
               {card.trend}
             </div>
           </div>

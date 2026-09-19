@@ -8,20 +8,20 @@
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
-  /* Compact professional custom scrollbars for high-density tables and logs */
+  /* Enterprise refined scrollbars */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
   ::-webkit-scrollbar-track {
-    background: #090D16;
+    background: #F1F5F9;
   }
   ::-webkit-scrollbar-thumb {
-    background: #1E293B;
-    border-radius: 3px;
+    background: #CBD5E1;
+    border-radius: 4px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #334155;
+    background: #94A3B8;
   }
 }
 
@@ -30,12 +30,12 @@
     @apply border border-soc-border;
   }
   .soc-panel {
-    @apply bg-soc-card border border-soc-border;
+    @apply bg-soc-card border border-soc-border rounded-xl shadow-enterprise;
   }
   .soc-panel-hover {
-    @apply hover:border-soc-borderLight transition-colors duration-150;
+    @apply hover:border-soc-borderLight hover:shadow-enterprise-md transition-all duration-150;
   }
   .soc-header {
-    @apply uppercase tracking-wider text-xs font-semibold text-soc-muted font-mono;
+    @apply uppercase tracking-wider text-xs font-bold text-soc-muted font-sans;
   }
 }

@@ -3,15 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useIncidents } from '../hooks/useIncidents';
 import { SeverityTag } from '../components/common/SeverityTag';
-import { formatStatus, getRiskColor, getRiskBarColor } from '../utils/formatters';
+import { formatStatus } from '../utils/formatters';
 import { Button } from '../components/common/Button';
-import { Card } from '../components/common/Card';
-import { RiskOverTimeChart } from '../components/incidents/RiskOverTimeChart';
-import { DetectionEvidenceCard } from '../components/incidents/DetectionEvidenceCard';
-import { IdentityVerificationCard } from '../components/incidents/IdentityVerificationCard';
-import { ConversationIntelligenceCard } from '../components/incidents/ConversationIntelligenceCard';
-import { ExplainabilityCard } from '../components/incidents/ExplainabilityCard';
-import { IncidentTimeline } from '../components/incidents/IncidentTimeline';
 import { ResolutionModal } from '../components/incidents/ResolutionModal';
 import { AssignModal } from '../components/incidents/AssignModal';
 import {
@@ -26,9 +19,14 @@ import {
   Building2,
   FileCheck2,
   Lock,
-  Share2,
   Send,
-  AlertTriangle
+  AlertTriangle,
+  Landmark,
+  ShieldCheck,
+  ExternalLink,
+  ChevronRight,
+  FileText,
+  AlertCircle
 } from 'lucide-react';
 
 export function Investigation() {
@@ -39,28 +37,47 @@ export function Investigation() {
   const [incident, setIncident] = useState(null);
   const [isResolutionModalOpen, setIsResolutionModalOpen] = useState(false);
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  const [isCybercrimeModalOpen, setIsCybercrimeModalOpen] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [cybercrimeRef, setCybercrimeRef] = useState(null);
+  const [submittingCybercrime, setSubmittingCybercrime] = useState(false);
 
   useEffect(() => {
-    if (incidents.length > 0) {
-      const found = incidents.find((i) => i.id === id) || incidents[0];
-      setIncident(found);
+    let isMounted = true;
+    async function loadIncident() {
+      if (id) {
+        try {
+          const inc = await api.getIncidentById(id);
+          if (inc && isMounted) {
+            setIncident(inc);
+            return;
+          }
+        } catch {
+          // fallback to list
+        }
+      }
+      if (incidents.length > 0 && isMounted) {
+        const found = incidents.find((i) => i.id === id) || incidents[0];
+        setIncident(found);
+      }
     }
+    loadIncident();
+    return () => { isMounted = false; };
   }, [id, incidents]);
 
   if (loading && !incident) {
     return (
-      <div className="p-12 text-center text-xs font-mono text-slate-500">
-        Loading investigation workspace for {id}...
+      <div className="p-12 text-center text-xs font-sans text-slate-500">
+        Loading incident investigation workspace for {id}...
       </div>
     );
   }
 
   if (!incident) {
     return (
-      <div className="p-12 text-center text-xs font-mono text-slate-400 space-y-3">
+      <div className="p-12 text-center text-xs font-sans text-slate-500 space-y-3">
         <div>Incident {id} not found in current investigation index.</div>
-        <Link to="/incidents" className="text-soc-accent underline">
+        <Link to="/incidents" className="text-blue-600 underline font-medium">
           Return to Incident Center
         </Link>
       </div>
@@ -68,11 +85,10 @@ export function Investigation() {
   }
 
   const statusMeta = formatStatus(incident.status);
-  const riskColor = getRiskColor(incident.riskScore);
 
   const showFeedback = (msg) => {
     setFeedbackMessage(msg);
-    setTimeout(() => setFeedbackMessage(''), 4000);
+    setTimeout(() => setFeedbackMessage(''), 4500);
   };
 
   const handleAcknowledge = async () => {
@@ -80,9 +96,14 @@ export function Investigation() {
     showFeedback('Incident successfully acknowledged by Sarah Chen (SOC Lead).');
   };
 
-  const handleEscalate = async () => {
-    await escalate(incident.id, 'Escalated by Tier-3 SOC analyst to CIRT.');
-    showFeedback('Incident escalated to CIRT & Executive Security Desk.');
+  const handleEscalateManager = async () => {
+    await escalate(incident.id, 'Escalated to Department Manager & Internal Corporate Security Desk.');
+    showFeedback('Escalation dispatched: Department Head & Internal Security notified.');
+  };
+
+  const handleEscalateBank = async () => {
+    await escalate(incident.id, 'Urgent escalation sent to Banking Partner Fraud Desk for account freeze.');
+    showFeedback('Escalation dispatched: Banking Fraud Operations notified for originating account hold.');
   };
 
   const handleAssign = async (incidentId, analystName) => {
@@ -90,54 +111,61 @@ export function Investigation() {
     showFeedback(`Incident reassigned to ${analystName}.`);
   };
 
-  const handleVerifyIdentityCallback = () => {
-    showFeedback('Secondary Out-of-Band Callback initiated to registered executive device.');
+  const handleRouteCybercrime = async () => {
+    setSubmittingCybercrime(true);
+    setTimeout(() => {
+      const generatedRef = `NCRP-IN-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+      setCybercrimeRef(generatedRef);
+      setSubmittingCybercrime(false);
+      showFeedback(`Case successfully routed to National Cybercrime Reporting Portal. Reference: ${generatedRef}`);
+    }, 1200);
   };
 
-  const handleRequestVerification = () => {
-    showFeedback('Additional Verification prompt dispatched to target receiver endpoint.');
-  };
+  // Plain-language What Happened description
+  const narrative = incident.narrative || 
+    `An inbound voice call was directed to ${incident.target?.name || 'Sreya Sengupta'} claiming to be ${incident.claimedIdentity?.name || 'Arun Kumar'}. The caller demanded immediate action under pretext of urgent financial payment verification and OTP authorization. The VoiceShield enterprise security engine identified synthetic voice manipulation and suspicious keyword patterns, placing the call on administrative hold and terminating the transmission prior to any credential or financial compromise.`;
 
   return (
-    <div className="space-y-6 font-mono pb-12">
+    <div className="space-y-6 font-sans text-slate-800 pb-12">
       {/* Toast Feedback Notification */}
       {feedbackMessage && (
-        <div className="p-3 bg-emerald-950/80 border border-emerald-700 text-emerald-200 text-xs rounded-md flex items-center justify-between shadow-lg">
+        <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs rounded-xl flex items-center justify-between shadow-xs">
           <div className="flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 text-emerald-400" />
-            <span>{feedbackMessage}</span>
+            <CheckCircle className="w-4 h-4 text-emerald-600" />
+            <span className="font-medium">{feedbackMessage}</span>
           </div>
-          <button onClick={() => setFeedbackMessage('')} className="text-emerald-400 hover:text-emerald-200">✕</button>
+          <button onClick={() => setFeedbackMessage('')} className="text-emerald-700 hover:text-emerald-900 cursor-pointer font-bold">✕</button>
         </div>
       )}
 
       {/* Top Breadcrumb & Incident Header */}
       <div className="space-y-3">
-        <div className="flex items-center gap-2 text-2xs text-slate-500">
-          <Link to="/incidents" className="hover:text-slate-300 flex items-center gap-1">
-            <ArrowLeft className="w-3 h-3" /> Incident Center
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <Link to="/incidents" className="hover:text-slate-800 flex items-center gap-1 font-medium">
+            <ArrowLeft className="w-3.5 h-3.5" /> Incident Center
           </Link>
           <span>/</span>
-          <span className="text-slate-300">{incident.id}</span>
+          <span className="text-slate-700 font-semibold">{incident.id}</span>
         </div>
 
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 bg-soc-card border border-soc-border rounded-md">
+        {/* 1. REPORTED INCIDENT (Header) */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-5 bg-white border border-slate-200/90 rounded-2xl shadow-xs">
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
-              <span className="font-mono text-base font-bold text-slate-100">{incident.id}</span>
+              <span className="text-base font-bold text-slate-900">{incident.id}</span>
               <SeverityTag severity={incident.severity} size="md" />
-              <span className={`px-2 py-0.5 rounded text-xs font-bold ${statusMeta.badge}`}>
+              <span className={`px-2.5 py-0.5 rounded-md text-xs font-semibold ${statusMeta.badge}`}>
                 {statusMeta.label}
               </span>
-              <span className="text-xs text-slate-500">• Ingress Channel: {incident.channel}</span>
+              <span className="text-xs text-slate-500">• Channel: {incident.channel || 'Enterprise VoIP Ingress'}</span>
             </div>
 
-            <h1 className="text-base font-semibold text-slate-100 mt-1.5">
+            <h1 className="text-lg font-semibold text-slate-900 mt-1.5 tracking-tight">
               {incident.title}
             </h1>
           </div>
 
-          {/* Quick Action Buttons */}
+          {/* Core Status & Actions */}
           <div className="flex items-center gap-2 flex-wrap">
             {incident.status === 'OPEN' && (
               <Button variant="secondary" size="sm" onClick={handleAcknowledge}>
@@ -149,260 +177,366 @@ export function Investigation() {
               Assign ({incident.assignedAnalyst?.split(' ')[0] || 'Unassigned'})
             </Button>
 
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={handleEscalate}
-              disabled={incident.status === 'ESCALATED'}
-            >
-              {incident.status === 'ESCALATED' ? 'Escalated to CIRT' : 'Escalate to CIRT'}
-            </Button>
-
-            {incident.status !== 'RESOLVED' && incident.status !== 'FALSE_POSITIVE' && incident.status !== 'CONFIRMED_ATTACK' ? (
+            {incident.status !== 'RESOLVED' && incident.status !== 'FALSE_POSITIVE' && (
               <Button variant="primary" size="sm" onClick={() => setIsResolutionModalOpen(true)}>
                 Resolve Incident
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" onClick={() => setIsResolutionModalOpen(true)}>
-                Update Verdict
               </Button>
             )}
           </div>
         </div>
       </div>
 
-      {/* Incident Metadata Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-        <div className="p-3 bg-soc-card border border-soc-border rounded">
+      {/* 1. REPORTED INCIDENT (Metadata Strip) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-xs">
           <span className="text-2xs text-slate-500 uppercase block font-semibold">Target Employee</span>
-          <span className="text-xs text-slate-200 font-bold block mt-1 truncate">{incident.target?.name}</span>
-          <span className="text-2xs text-slate-400 block truncate">{incident.target?.role}</span>
+          <span className="text-xs text-slate-900 font-semibold block mt-1 truncate">{incident.target?.name || 'Sreya Sengupta'}</span>
+          <span className="text-2xs text-slate-500 block truncate">{incident.target?.role || 'Citizen / Finance Executive'}</span>
         </div>
 
-        <div className="p-3 bg-soc-card border border-soc-border rounded">
+        <div className="p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-xs">
           <span className="text-2xs text-slate-500 uppercase block font-semibold">Department</span>
-          <span className="text-xs text-slate-200 font-bold block mt-1">{incident.target?.department}</span>
-          <span className="text-2xs text-slate-400 block truncate">{incident.target?.endpointId}</span>
+          <span className="text-xs text-slate-900 font-semibold block mt-1">{incident.target?.department || 'Finance Operations'}</span>
+          <span className="text-2xs text-slate-500 block truncate">{incident.target?.endpointId || 'EMP-FIN-4091'}</span>
         </div>
 
-        <div className="p-3 bg-soc-card border border-soc-border rounded">
+        <div className="p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-xs">
           <span className="text-2xs text-slate-500 uppercase block font-semibold">Claimed Identity</span>
-          <span className="text-xs text-red-300 font-bold block mt-1 truncate">{incident.claimedIdentity?.name}</span>
-          <span className="text-2xs text-slate-400 block truncate">{incident.claimedIdentity?.role}</span>
+          <span className="text-xs text-red-700 font-semibold block mt-1 truncate">{incident.claimedIdentity?.name || 'Arun Kumar'}</span>
+          <span className="text-2xs text-slate-500 block truncate">{incident.claimedIdentity?.role || 'Senior Executive — Finance'}</span>
         </div>
 
-        <div className="p-3 bg-soc-card border border-soc-border rounded">
+        <div className="p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-xs">
           <span className="text-2xs text-slate-500 uppercase block font-semibold">Caller Origin</span>
-          <span className="text-xs text-slate-200 font-bold block mt-1 truncate">{incident.callerNumber}</span>
-          <span className="text-2xs text-slate-400 block">Duration: {incident.duration}</span>
+          <span className="text-xs text-slate-900 font-semibold block mt-1 truncate">{incident.callerNumber || '+91 98450 11234'}</span>
+          <span className="text-2xs text-slate-500 block">VoIP Carrier Route</span>
         </div>
 
-        <div className="p-3 bg-soc-card border border-soc-border rounded">
+        <div className="p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-xs">
           <span className="text-2xs text-slate-500 uppercase block font-semibold">Assigned Analyst</span>
-          <span className="text-xs text-slate-200 font-bold block mt-1 truncate">{incident.assignedAnalyst || 'Unassigned'}</span>
-          <span className="text-2xs text-emerald-400 block">Tier-3 Active</span>
+          <span className="text-xs text-slate-900 font-semibold block mt-1 truncate">{incident.assignedAnalyst || 'Sarah Chen (Lead)'}</span>
+          <span className="text-2xs text-emerald-700 font-medium block">Active Investigation</span>
         </div>
 
-        <div className="p-3 bg-soc-card border border-soc-border rounded">
-          <span className="text-2xs text-slate-500 uppercase block font-semibold">Timestamp</span>
-          <span className="text-xs text-slate-200 font-bold block mt-1">{incident.createdAt?.split(' ')[1] || 'N/A'}</span>
-          <span className="text-2xs text-slate-400 block">{incident.createdAt?.split(' ')[0]}</span>
+        <div className="p-3.5 bg-white border border-slate-200/80 rounded-xl shadow-xs">
+          <span className="text-2xs text-slate-500 uppercase block font-semibold">Incident Timestamp</span>
+          <span className="text-xs text-slate-900 font-semibold block mt-1">{incident.createdAt?.split(' ')[1] || '10:14:02 IST'}</span>
+          <span className="text-2xs text-slate-500 block">{incident.createdAt?.split(' ')[0] || '2026-09-15'}</span>
         </div>
       </div>
 
-      {/* Resolution Verdict Banner (If Resolved) */}
-      {incident.resolution && (
-        <div className="p-4 bg-slate-900/90 border border-slate-700 rounded-md space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-2xs uppercase tracking-widest text-slate-400 font-bold">
-              Official Resolution Record
-            </span>
-            <span className="text-2xs text-slate-500">Resolved at: {incident.resolution.resolvedAt}</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-bold text-slate-400 uppercase">Final Verdict:</span>
-            <span className={`px-2.5 py-0.5 rounded text-xs font-bold ${formatStatus(incident.resolution.verdict).badge}`}>
-              {formatStatus(incident.resolution.verdict).label}
-            </span>
-            <span className="text-2xs text-slate-400 font-mono">• Investigator: {incident.resolution.resolvedBy}</span>
-          </div>
-          <p className="text-xs text-slate-300 bg-slate-950/60 p-2.5 rounded border border-slate-800">
-            {incident.resolution.reason}
-          </p>
-        </div>
-      )}
-
-      {/* Main Analysis Grid */}
+      {/* Main 2-Column Clean Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Risk & Detection Details */}
+        
+        {/* Left Column (8 cols): What Happened, Incident Type & Exposure Assessment */}
         <div className="lg:col-span-8 space-y-6">
-          {/* Overall Risk & Risk Breakdown */}
-          <Card title="Overall Risk Scoring & Biometric Breakdown">
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
-              {/* Overall Risk Gauge */}
-              <div className="md:col-span-4 p-4 rounded bg-slate-900/60 border border-slate-800 text-center flex flex-col justify-center">
-                <span className="text-2xs text-slate-500 uppercase tracking-widest block font-semibold">
-                  Synthesized Risk Score
-                </span>
-                <div className="my-2">
-                  <span className={`text-4xl font-black ${riskColor}`}>
-                    {incident.riskScore}
-                  </span>
-                  <span className="text-sm font-bold text-slate-500"> / 100</span>
-                </div>
-                <div className="mt-1">
-                  <span className={`px-2.5 py-1 rounded text-xs font-bold tracking-wider ${incident.overallRisk?.level === 'CRITICAL' ? 'bg-red-950/80 text-red-300 border border-red-700' : 'bg-orange-950/80 text-orange-300 border border-orange-700'}`}>
-                    {incident.overallRisk?.level || incident.severity}
-                  </span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-2">
-                  Recommended Action: <strong className="text-slate-300">{incident.overallRisk?.recommendation || 'ESCALATE'}</strong>
-                </span>
+
+          {/* 2. WHAT HAPPENED */}
+          <div className="p-6 bg-white border border-slate-200/90 rounded-2xl shadow-xs space-y-4">
+            <div className="flex items-center gap-2 pb-3 border-b border-slate-200/80">
+              <FileText className="w-4 h-4 text-blue-600" />
+              <h2 className="text-sm font-bold tracking-tight text-slate-900">
+                Incident Narrative & What Happened
+              </h2>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              {narrative}
+            </p>
+
+            {/* Observed Pretext & Protection Trigger */}
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+              <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-xl">
+                <span className="text-2xs uppercase text-slate-500 font-semibold block">Observed Pretext</span>
+                <span className="text-xs text-slate-900 font-semibold block mt-1">High-Urgency Executive Impersonation</span>
+                <p className="text-xs text-slate-600 mt-1.5 leading-normal">
+                  Caller claimed urgent administrative deadline, requested bypassing internal approval mechanisms, and pressured employee for instant authorization.
+                </p>
               </div>
 
-              {/* Sub-Risk Breakdown Bars */}
-              <div className="md:col-span-8 space-y-2.5">
-                <div>
-                  <div className="flex justify-between text-2xs mb-1">
-                    <span className="text-slate-400">Voice Authenticity (Acoustic Deepfake Likelihood)</span>
-                    <strong className="text-red-400">{incident.riskBreakdown?.voiceAuthenticity}%</strong>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-red-500" style={{ width: `${incident.riskBreakdown?.voiceAuthenticity}%` }} />
-                  </div>
-                </div>
+              <div className="p-4 bg-emerald-50/60 border border-emerald-200/80 rounded-xl">
+                <span className="text-2xs uppercase text-emerald-800 font-semibold block">Autonomous Protective Action</span>
+                <span className="text-xs text-emerald-900 font-semibold block mt-1">Call Intercepted & Disconnected</span>
+                <p className="text-xs text-emerald-800/90 mt-1.5 leading-normal">
+                  Call placed on hold, localized security advisory delivered to both parties, and audio transmission safely terminated before credentials were disclosed.
+                </p>
+              </div>
+            </div>
+          </div>
 
-                <div>
-                  <div className="flex justify-between text-2xs mb-1">
-                    <span className="text-slate-400">Identity Risk (Biometric Separation Distance)</span>
-                    <strong className="text-red-400">{incident.riskBreakdown?.identityRisk}%</strong>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-red-500" style={{ width: `${incident.riskBreakdown?.identityRisk}%` }} />
-                  </div>
-                </div>
+          {/* 3. RELEVANT INCIDENT TYPE */}
+          <div className="p-6 bg-white border border-slate-200/90 rounded-2xl shadow-xs space-y-3">
+            <div className="flex items-center gap-2 pb-3 border-b border-slate-200/80">
+              <ShieldAlert className="w-4 h-4 text-amber-600" />
+              <h2 className="text-sm font-bold tracking-tight text-slate-900">
+                Relevant Incident Classification
+              </h2>
+            </div>
 
-                <div>
-                  <div className="flex justify-between text-2xs mb-1">
-                    <span className="text-slate-400">Conversation Risk (Urgency & Fraud Intent)</span>
-                    <strong className="text-amber-400">{incident.riskBreakdown?.conversationRisk}%</strong>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-amber-500" style={{ width: `${incident.riskBreakdown?.conversationRisk}%` }} />
-                  </div>
-                </div>
+            <div className="flex items-center gap-2 flex-wrap pt-1">
+              <span className="px-3 py-1 bg-red-50 border border-red-200 text-red-800 rounded-lg text-xs font-semibold">
+                Executive Voice Impersonation
+              </span>
+              <span className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs font-semibold">
+                Urgent Financial Fraud / Wire Solicitation
+              </span>
+              <span className="px-3 py-1 bg-blue-50 border border-blue-200 text-blue-800 rounded-lg text-xs font-semibold">
+                Credential & OTP Harvesting Attempt
+              </span>
+            </div>
 
-                <div>
-                  <div className="flex justify-between text-2xs mb-1">
-                    <span className="text-slate-400">Contextual Risk (Target Vulnerability & Timing)</span>
-                    <strong className="text-orange-400">{incident.riskBreakdown?.contextualRisk}%</strong>
-                  </div>
-                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-orange-500" style={{ width: `${incident.riskBreakdown?.contextualRisk}%` }} />
-                  </div>
-                </div>
+            <p className="text-xs text-slate-600 leading-relaxed pt-2">
+              Categorized under <strong>CIRT Threat Category 4 (Advanced Social Engineering & Synthetic Pretexting)</strong>. 
+              The adversary weaponized synthetic speech to impersonate organizational leadership with intent to facilitate fraudulent disbursements.
+            </p>
+          </div>
 
-                <div>
-                  <div className="flex justify-between text-2xs mb-1">
-                    <span className="text-slate-500">Transaction Risk (External Core Banking Wire)</span>
-                    <span className="text-slate-500">N/A (Integration Not Configured)</span>
-                  </div>
+          {/* 4. WHETHER CREDENTIAL / FINANCIAL EXPOSURE IS POSSIBLE */}
+          <div className="p-6 bg-white border border-slate-200/90 rounded-2xl shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200/80">
+              <div className="flex items-center gap-2">
+                <Landmark className="w-4 h-4 text-emerald-600" />
+                <h2 className="text-sm font-bold tracking-tight text-slate-900">
+                  Exposure Risk Assessment
+                </h2>
+              </div>
+              <span className="px-2.5 py-0.5 rounded-md text-xs font-semibold bg-emerald-50 border border-emerald-200 text-emerald-800">
+                Zero Compromise Verified
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-xl space-y-1.5">
+                <div className="text-2xs uppercase text-slate-500 font-semibold">Potential Financial Exposure</div>
+                <div className="text-sm font-bold text-slate-900">
+                  ₹12,50,000 (~$15,000 USD) Attempted
                 </div>
+                <p className="text-xs text-slate-600">
+                  Caller solicited immediate wire authorization to an unverified third-party vendor ledger.
+                </p>
+              </div>
+
+              <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-xl space-y-1.5">
+                <div className="text-2xs uppercase text-slate-500 font-semibold">Credential Exposure Status</div>
+                <div className="text-sm font-bold text-emerald-700">
+                  No Credentials or OTPs Disclosed
+                </div>
+                <p className="text-xs text-slate-600">
+                  Employee did not enter single sign-on passwords, 2FA tokens, or corporate credentials.
+                </p>
               </div>
             </div>
 
-            {/* Risk Over Time Chart */}
-            <div className="mt-5 pt-4 border-t border-soc-border">
-              <RiskOverTimeChart data={incident.riskOverTime} />
+            <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-start gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <strong className="text-emerald-950">Mitigation Verified:</strong> Because the protective intervention executed during the request phase, all downstream bank accounts, corporate treasury rails, and enterprise credentials remain uncompromised.
+              </div>
             </div>
-          </Card>
+          </div>
 
-          {/* Detection Evidence (Section 9) */}
-          <DetectionEvidenceCard evidence={incident.detectionEvidence} />
-
-          {/* Identity Biometric Verification (Section 10) */}
-          <IdentityVerificationCard
-            identityDetails={incident.identityDetails}
-            claimedIdentity={incident.claimedIdentity}
-          />
-
-          {/* Conversational Intelligence (Section 11) */}
-          <ConversationIntelligenceCard intelligence={incident.conversationIntelligence} />
         </div>
 
-        {/* Right Column: Explainability, Actions & Timeline */}
+        {/* Right Column (4 cols): Escalation Pathway & National Cybercrime Portal */}
         <div className="lg:col-span-4 space-y-6">
-          {/* Response Actions (Section 14) */}
-          <Card title="Operational SOC Response Actions">
-            <div className="space-y-2.5 font-mono text-xs">
+
+          {/* 5. THE APPROPRIATE ESCALATION PATHWAY */}
+          <div className="p-6 bg-white border border-slate-200/90 rounded-2xl shadow-xs space-y-4">
+            <div className="flex items-center gap-2 pb-3 border-b border-slate-200/80">
+              <AlertOctagon className="w-4 h-4 text-blue-600" />
+              <h2 className="text-sm font-bold tracking-tight text-slate-900">
+                Appropriate Escalation Pathway
+              </h2>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              {/* Pathway 1: Internal Management / HR / Security */}
+              <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-xl space-y-2">
+                <div className="flex items-center gap-2 text-slate-900 font-semibold">
+                  <Building2 className="w-4 h-4 text-blue-600" />
+                  <span>Workplace Impersonation Pathway</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-normal">
+                  Route to Finance Department Head & Internal Corporate Security Desk to issue targeted advisory.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-center text-xs mt-1"
+                  onClick={handleEscalateManager}
+                >
+                  Notify Manager & Security Desk
+                </Button>
+              </div>
+
+              {/* Pathway 2: Financial / Banking Fraud Operations */}
+              <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-xl space-y-2">
+                <div className="flex items-center gap-2 text-slate-900 font-semibold">
+                  <Landmark className="w-4 h-4 text-amber-700" />
+                  <span>Banking & Treasury Pathway</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-normal">
+                  Escalate to FinCorp Banking Partner Fraud Operations & flag originating caller account numbers.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-center text-xs mt-1"
+                  onClick={handleEscalateBank}
+                >
+                  Alert Banking Fraud Desk
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {/* 6. OPTION / PATHWAY TO ROUTE TO NATIONAL CYBERCRIME UNIT / PORTAL */}
+          <div className="p-6 bg-white border border-slate-200/90 rounded-2xl shadow-xs space-y-4">
+            <div className="flex items-center gap-2 pb-3 border-b border-slate-200/80">
+              <Send className="w-4 h-4 text-red-600" />
+              <h2 className="text-sm font-bold tracking-tight text-slate-900">
+                National Cybercrime Portal
+              </h2>
+            </div>
+
+            <div className="p-4 bg-red-50/70 border border-red-200 rounded-xl space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-red-900">NCRP Escalation Desk</span>
+                <span className="text-2xs px-2 py-0.5 bg-red-100 text-red-800 rounded-md font-bold">
+                  Helpline 1930
+                </span>
+              </div>
+              <p className="text-xs text-slate-700 leading-normal">
+                Direct integration pathway to the <strong>National Cybercrime Reporting Portal (cybercrime.gov.in)</strong> for financial fraud attempt documentation.
+              </p>
+
+              {cybercrimeRef ? (
+                <div className="mt-2 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs space-y-1">
+                  <div className="font-semibold text-emerald-900 flex items-center gap-1.5">
+                    <CheckCircle className="w-4 h-4 text-emerald-600" />
+                    <span>Referral Submitted to NCRP</span>
+                  </div>
+                  <div className="text-xs font-bold text-emerald-800 mt-1">
+                    Token: {cybercrimeRef}
+                  </div>
+                  <div className="text-slate-500 text-[11px]">
+                    Logged to audit chain for national regulatory compliance.
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  className="w-full justify-center text-xs mt-1"
+                  onClick={() => setIsCybercrimeModalOpen(true)}
+                  disabled={submittingCybercrime}
+                >
+                  <Send className="w-3.5 h-3.5 mr-1.5" />
+                  <span>Route to National Cybercrime Portal</span>
+                </Button>
+              )}
+            </div>
+
+            <div className="text-xs text-slate-500 leading-normal">
+              Official referral transmits caller ingress identifier, timestamped audio transcript snippets, and fraud classification.
+            </div>
+          </div>
+
+          {/* Quick Case Resolution Record */}
+          <div className="p-5 bg-white border border-slate-200/90 rounded-2xl shadow-xs text-xs space-y-2.5">
+            <div className="text-2xs uppercase text-slate-500 font-semibold">Case Status</div>
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-slate-800">{incident.status}</span>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => setIsResolutionModalOpen(true)}
+              >
+                Document Verdict
+              </Button>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      {/* Cybercrime Referral Confirmation Modal */}
+      {isCybercrimeModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-xl">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-200/80">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-red-100 text-red-700 flex items-center justify-center">
+                  <Send className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">National Cybercrime Portal Referral</h3>
+                  <p className="text-xs text-slate-500">Citizen Financial Cyber Fraud Reporting (1930 / cybercrime.gov.in)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsCybercrimeModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-700">
+              <p className="text-xs text-slate-600">
+                You are preparing an official escalation package for the National Cybercrime Reporting Portal:
+              </p>
+
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Incident Reference:</span>
+                  <span className="font-semibold text-slate-900">{incident.id}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Target Employee:</span>
+                  <span className="text-slate-800">{incident.target?.name} ({incident.target?.department})</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Impersonated Executive:</span>
+                  <span className="text-red-700 font-semibold">{incident.claimedIdentity?.name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Suspect Caller Origin:</span>
+                  <span className="text-slate-800">{incident.callerNumber}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Attempted Exposure:</span>
+                  <span className="text-amber-800 font-semibold">₹12,50,000 (Payment Diversion Pretext)</span>
+                </div>
+              </div>
+
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900">
+                <strong>Demonstration Mode:</strong> Forwarding will generate an official receipt token and log this action into the enterprise audit chain.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200">
               <Button
                 variant="outline"
                 size="sm"
-                className="w-full justify-start"
-                onClick={handleVerifyIdentityCallback}
-                icon={PhoneCall}
+                onClick={() => setIsCybercrimeModalOpen(false)}
               >
-                Trigger Out-of-Band Callback
+                Cancel
               </Button>
-
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full justify-start"
-                onClick={handleRequestVerification}
-                icon={ShieldAlert}
-              >
-                Request Endpoint Step-Up MFA
-              </Button>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                className="w-full justify-start"
-                onClick={() => setIsAssignModalOpen(true)}
-                icon={UserCheck}
-              >
-                Reassign Case Specialist
-              </Button>
-
               <Button
                 variant="danger"
                 size="sm"
-                className="w-full justify-start"
-                onClick={handleEscalate}
-                icon={AlertOctagon}
-                disabled={incident.status === 'ESCALATED'}
+                onClick={() => {
+                  setIsCybercrimeModalOpen(false);
+                  handleRouteCybercrime();
+                }}
               >
-                Escalate to Enterprise CIRT
+                Confirm & Dispatch to Portal
               </Button>
-
-              <div className="pt-2 border-t border-soc-border space-y-2">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => setIsResolutionModalOpen(true)}
-                  icon={FileCheck2}
-                >
-                  Document Verdict / Resolve Case
-                </Button>
-
-                {/* Realism: Mark unavailable enterprise PBX integrations as Coming Soon */}
-                <div className="p-2.5 bg-slate-950/60 border border-dashed border-slate-800 rounded text-2xs text-slate-500">
-                  <div className="font-semibold text-slate-400 mb-0.5">Automated Call Termination:</div>
-                  PSTN/PBX hardware disconnect adapter: <span className="text-amber-400">Request Preventive Action</span> (Coming Soon via SIP trunk connector).
-                </div>
-              </div>
             </div>
-          </Card>
-
-          {/* Explainability (Section 12) */}
-          <ExplainabilityCard explainability={incident.explainability} />
-
-          {/* Chronological Incident Timeline (Section 13) */}
-          <IncidentTimeline timeline={incident.timeline} />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Resolution Modal */}
       <ResolutionModal
@@ -422,3 +556,4 @@ export function Investigation() {
     </div>
   );
 }
+

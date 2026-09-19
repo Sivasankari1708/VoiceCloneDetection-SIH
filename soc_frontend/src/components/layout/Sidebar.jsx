@@ -51,18 +51,18 @@ export function Sidebar() {
   ];
 
   return (
-    <aside className="w-64 bg-soc-card border-r border-soc-border flex flex-col shrink-0 h-screen sticky top-0 overflow-y-auto">
+    <aside className="w-64 bg-white border-r border-slate-200/90 flex flex-col shrink-0 h-screen sticky top-0 overflow-y-auto font-sans">
       {/* Brand Header */}
-      <div className="p-4 border-b border-soc-border flex items-center gap-3">
-        <div className="w-9 h-9 rounded bg-soc-accent/10 border border-soc-accent/30 flex items-center justify-center text-soc-accent shrink-0">
+      <div className="p-4 border-b border-slate-100 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shrink-0 shadow-xs">
           <Shield className="w-5 h-5" />
         </div>
         <div>
           <div className="flex items-center gap-1.5">
-            <span className="font-mono font-bold tracking-wider text-sm text-soc-text">VoiceShield</span>
-            <span className="px-1 py-0.2 rounded bg-soc-accent/20 text-soc-accent font-mono text-[9px] font-semibold">SOC</span>
+            <span className="font-extrabold tracking-tight text-base text-slate-900 leading-none">VoiceShield</span>
+            <span className="px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-bold border border-blue-200/60">SOC</span>
           </div>
-          <p className="text-2xs text-soc-muted uppercase tracking-wider font-mono">Defense Console</p>
+          <p className="text-[11px] text-slate-400 font-medium mt-0.5">Enterprise Defense Console</p>
         </div>
       </div>
 
@@ -70,10 +70,10 @@ export function Sidebar() {
       <div className="flex-1 py-4 px-3 space-y-6">
         {navSections.map((section, idx) => (
           <div key={idx}>
-            <div className="px-3 mb-2 font-mono text-[10px] font-bold tracking-widest text-slate-500 uppercase">
+            <div className="px-3 mb-2 text-[10px] font-bold tracking-wider text-slate-400 uppercase">
               {section.title}
             </div>
-            <nav className="space-y-0.5">
+            <nav className="space-y-1">
               {section.items.map((item) => {
                 const Icon = item.icon;
                 const isActive = item.matchPrefix 
@@ -84,19 +84,19 @@ export function Sidebar() {
                   <NavLink
                     key={item.path}
                     to={item.path}
-                    className={`flex items-center justify-between px-3 py-2 rounded text-xs font-mono transition-colors duration-150 ${
+                    className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-150 ${
                       isActive
-                        ? 'bg-soc-accent/10 text-soc-accent border border-soc-accent/30 font-semibold'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
+                        ? 'bg-blue-50 text-blue-700 border border-blue-200/70 font-bold shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70 border border-transparent'
                     }`}
                   >
                     <div className="flex items-center gap-2.5">
-                      <Icon className={`w-4 h-4 ${isActive ? 'text-soc-accent' : 'text-slate-400'}`} />
+                      <Icon className={`w-4 h-4 ${isActive ? 'text-blue-700' : 'text-slate-500'}`} />
                       <span>{item.name}</span>
                     </div>
                     {item.badge && (
-                      <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.2 bg-red-950/80 text-red-400 border border-red-800/60 rounded">
-                        <span className="w-1 h-1 rounded-full bg-red-500 animate-ping" />
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded-full">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                         {item.badge}
                       </span>
                     )}
@@ -109,10 +109,10 @@ export function Sidebar() {
       </div>
 
       {/* Bottom Compliance Box */}
-      <div className="p-3 border-t border-soc-border bg-slate-950/40">
-        <div className="text-2xs font-mono text-slate-500 leading-tight">
-          <div className="text-slate-400 font-semibold mb-0.5">SOC Telemetry Only</div>
-          Strict zero-audio monitoring policy enforced.
+      <div className="p-3.5 border-t border-slate-100 bg-slate-50/60">
+        <div className="text-2xs text-slate-500 leading-tight">
+          <div className="text-slate-800 font-bold mb-0.5">Zero-Audio Architecture</div>
+          Raw voice streams are never retained. Telemetry only.
         </div>
       </div>
     </aside>

@@ -7,6 +7,7 @@ import type {
   SecuritySettings,
   ScenarioId,
 } from '../types';
+import { getEffectiveAuthSession, saveAuthSession, clearAuthSession } from '../services/auth/authStorage';
 
 // ─── State Shape ──────────────────────────────────────────────
 interface AppState {
@@ -56,16 +57,10 @@ const DEFAULT_SETTINGS: SecuritySettings = {
 };
 
 function getSavedInitialState(): AppState {
-  let user: User | null = null;
-  let token: string | null = null;
-  try {
-    token = localStorage.getItem('voiceshield_token');
-    const uStr = localStorage.getItem('voiceshield_user');
-    if (uStr) user = JSON.parse(uStr);
-  } catch {}
+  const { user, token } = getEffectiveAuthSession();
   return {
     isAuthenticated: Boolean(token && user),
-    user: user,
+    user,
     token,
     activeCall: null,
     selectedScenarioId: null,
@@ -81,10 +76,7 @@ const INITIAL_STATE: AppState = getSavedInitialState();
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'LOGIN':
-      try {
-        localStorage.setItem('voiceshield_token', action.payload.token);
-        localStorage.setItem('voiceshield_user', JSON.stringify(action.payload.user));
-      } catch {}
+      saveAuthSession(action.payload.user, action.payload.token);
       return {
         ...state,
         isAuthenticated: true,
@@ -93,10 +85,7 @@ function reducer(state: AppState, action: Action): AppState {
       };
 
     case 'LOGOUT':
-      try {
-        localStorage.removeItem('voiceshield_token');
-        localStorage.removeItem('voiceshield_user');
-      } catch {}
+      clearAuthSession(state.user);
       return {
         ...INITIAL_STATE,
         isAuthenticated: false,

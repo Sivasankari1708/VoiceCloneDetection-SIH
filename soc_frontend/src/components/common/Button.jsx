@@ -11,23 +11,23 @@ export function Button({
   icon: Icon,
   type = 'button'
 }) {
-  const baseClasses = 'inline-flex items-center justify-center font-mono font-medium rounded transition-colors duration-150 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed';
+  const baseClasses = 'inline-flex items-center justify-center font-sans font-medium rounded-lg transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
   const sizeClasses = {
-    xs: 'text-2xs px-2 py-1 gap-1',
-    sm: 'text-xs px-2.5 py-1.5 gap-1.5',
-    md: 'text-xs px-3.5 py-2 gap-2',
-    lg: 'text-sm px-4 py-2.5 gap-2',
-  }[size] || 'text-xs px-3 py-1.5 gap-1.5';
+    xs: 'text-2xs px-2.5 py-1 gap-1',
+    sm: 'text-xs px-3 py-1.5 gap-1.5',
+    md: 'text-xs px-4 py-2 gap-2 font-medium',
+    lg: 'text-sm px-5 py-2.5 gap-2 font-medium',
+  }[size] || 'text-xs px-3.5 py-2 gap-1.5';
 
   const variantClasses = {
-    primary: 'bg-soc-accent hover:bg-soc-accentHover text-slate-950 font-semibold shadow-sm',
-    secondary: 'bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 hover:border-slate-600',
-    danger: 'bg-red-950/80 hover:bg-red-900/90 text-red-200 border border-red-800 hover:border-red-700',
-    warning: 'bg-amber-950/80 hover:bg-amber-900/90 text-amber-200 border border-amber-800 hover:border-amber-700',
-    outline: 'bg-transparent hover:bg-slate-800/60 text-slate-300 border border-slate-700',
-    ghost: 'bg-transparent hover:bg-slate-800 text-slate-400 hover:text-slate-200',
-  }[variant] || 'bg-slate-800 text-slate-200';
+    primary: 'bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-xs hover:shadow transition-all',
+    secondary: 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-300/80 hover:border-slate-400 shadow-xs',
+    danger: 'bg-red-50 hover:bg-red-100/90 text-red-700 border border-red-200 font-medium shadow-xs',
+    warning: 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-medium shadow-xs',
+    outline: 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 hover:border-slate-400 shadow-xs',
+    ghost: 'bg-transparent hover:bg-slate-100/80 text-slate-600 hover:text-slate-900',
+  }[variant] || 'bg-white text-slate-700 border border-slate-300';
 
   return (
     <button
@@ -41,3 +41,4 @@ export function Button({
     </button>
   );
 }
+

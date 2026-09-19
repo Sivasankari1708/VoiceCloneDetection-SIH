@@ -212,29 +212,61 @@ async def websocket_audio_stream(websocket: WebSocket, session_id: str):
                                         call.caller_name = f"{claim_res.claimed_person} (Claimed)"
                                     db.commit()
 
+                            # Run ultra-fast intent detection on real-time speech (< 1ms)
+                            try:
+                                from backend.intent.intent_detector import IntentDetector, IntentType
+                                detector = IntentDetector()
+                                intent_res = detector.analyze(tr_text)
+                                if intent_res.intent in (IntentType.OTP_REQUEST, IntentType.CREDENTIAL_REQUEST):
+                                    call.current_risk_score = max(call.current_risk_score or 0.0, 92.0)
+                                    call.current_risk_level = "CRITICAL"
+                                    call.alert_triggered = True
+                                    call.alert_reason = f"Urgent OTP/Credential request detected: '{tr_text[:60]}'"
+                                elif intent_res.intent in (IntentType.PAYMENT_TRANSFER, IntentType.URGENT_REQUEST):
+                                    call.current_risk_score = max(call.current_risk_score or 0.0, 78.0)
+                                    call.current_risk_level = "HIGH"
+                                    call.alert_triggered = True
+                                    call.alert_reason = f"Suspicious urgency/transfer request detected: '{tr_text[:60]}'"
+                                db.commit()
+                            except Exception as intent_err:
+                                log.debug("[WS:Stream] Fast intent analysis note: %s", intent_err)
+
+                        update_payload = {
+                            "session_id": session_id,
+                            "chunk_id": chunk_counter,
+                            "transcript": tr_text,
+                            "accumulated_transcript": call.accumulated_transcript if call else tr_text,
+                            "is_final": is_final,
+                            "speaker": speaker,
+                            "speech_detected": True,
+                            "verdict": call.final_verdict if call else "genuine",
+                            "risk_score": call.current_risk_score if call else 0.0,
+                            "risk_level": call.current_risk_level if call else "SAFE",
+                            "identity_status": "MATCHED" if (call and call.claimed_speaker_id) else "UNVERIFIED",
+                            "recommended_action": "BLOCK / VERIFY" if (call and call.current_risk_level == "CRITICAL") else ("VERIFY" if (call and call.current_risk_level == "HIGH") else "MONITOR"),
+                        }
+
                         # Dispatch transcript IMMEDIATELY to recipient and caller (< 2ms)
                         await dispatcher.send_to_call(
                             session_id,
                             {
                                 "event": WebSocketEventType.RISK_UPDATE,
                                 "timestamp": utcnow().isoformat(),
-                                "data": {
-                                    "session_id": session_id,
-                                    "chunk_id": chunk_counter,
-                                    "transcript": tr_text,
-                                    "accumulated_transcript": call.accumulated_transcript if call else tr_text,
-                                    "is_final": is_final,
-                                    "speaker": speaker,
-                                    "speech_detected": True,
-                                    "verdict": call.final_verdict if call else "genuine",
-                                    "risk_score": call.current_risk_score if call else 0.0,
-                                    "risk_level": call.current_risk_level if call else "SAFE",
-                                    "identity_status": "MATCHED" if (call and call.claimed_speaker_id) else "UNVERIFIED",
-                                    "recommended_action": "MONITOR",
-                                },
+                                "data": update_payload,
                             },
                             exclude_socket=websocket,
                         )
+
+                        # Dispatch to recipient user feed directly
+                        if call and call.recipient_user_id:
+                            await dispatcher.send_to_user(
+                                call.recipient_user_id,
+                                {
+                                    "event": WebSocketEventType.RISK_UPDATE,
+                                    "timestamp": utcnow().isoformat(),
+                                    "data": update_payload,
+                                },
+                            )
                     continue
 
                 chunk_idx = payload.get("chunk_id", chunk_counter + 1)
@@ -355,21 +387,29 @@ async def websocket_user_feed(websocket: WebSocket, user_id: str):
     await dispatcher.register_user_socket(effective_user_id, websocket)
     log.info("[WS:UserFeed] User client connected for '%s' (%s).", user.username, effective_user_id)
 
-    # Replay any active pending incoming call for this user
+    # Only replay if an authoritative call was initiated very recently (< 20 seconds ago)
+    recent_cutoff = utcnow().timestamp() - 20.0
     pending_call = db.query(CallSession).filter(
         CallSession.recipient_user_id == effective_user_id,
         CallSession.status == "RINGING",
     ).order_by(CallSession.start_time.desc()).first()
+
     if pending_call:
-        log.info("[WS:UserFeed] Replaying pending RINGING call '%s' to user '%s'.", pending_call.session_id, user.username)
-        try:
-            await websocket.send_text(json.dumps({
-                "event": WebSocketEventType.INCOMING_CALL,
-                "timestamp": utcnow().isoformat(),
-                "data": pending_call.to_dict(),
-            }))
-        except Exception as e:
-            log.warning("[WS:UserFeed] Failed to replay incoming call: %s", e)
+        if pending_call.start_time and pending_call.start_time.timestamp() >= recent_cutoff:
+            log.info("[WS:UserFeed] Replaying fresh pending RINGING call '%s' to user '%s'.", pending_call.session_id, user.username)
+            try:
+                await websocket.send_text(json.dumps({
+                    "event": WebSocketEventType.INCOMING_CALL,
+                    "timestamp": utcnow().isoformat(),
+                    "data": pending_call.to_dict(),
+                }))
+            except Exception as e:
+                log.warning("[WS:UserFeed] Failed to replay incoming call: %s", e)
+        else:
+            # Expire stale ringing session
+            pending_call.status = "REJECTED"
+            pending_call.end_time = utcnow()
+            db.commit()
 
     try:
         while True:

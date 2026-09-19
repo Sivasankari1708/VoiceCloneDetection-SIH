@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -264,7 +265,7 @@ class SecurityOrchestrator:
             telemetry.accumulated_transcript = call.accumulated_transcript
 
         effective_transcript = telemetry.accumulated_transcript or call.accumulated_transcript or ""
-        if not call.claimed_speaker_id and effective_transcript:
+        if effective_transcript:
             claim_res = extract_identity_claim(effective_transcript, self.db)
             if claim_res.has_claim:
                 if claim_res.protected_identity:
@@ -296,10 +297,7 @@ class SecurityOrchestrator:
                     call.org_id = claim_res.organization.id
                     org_id = claim_res.organization.id
                 elif claim_res.claimed_org_name:
-                    call.claimed_org_id = None
                     call.claimed_org_name = claim_res.claimed_org_name
-                    call.org_id = None
-                    org_id = None
 
         # 2. Retrieve Protected Identity and Security Policy context
         protected_identity = None
@@ -331,7 +329,7 @@ class SecurityOrchestrator:
             else:
                 telemetry.verdict = "genuine"
         else:
-            # Caller claimed an enrolled protected identity (e.g. Rajesh Malhotra)
+            # Caller claimed an enrolled protected identity (e.g. Rajesh Kumar)
             # Invariant: Deepfake synthesis strictly overrides speaker similarity!
             if effective_synth is not None and effective_synth >= 0.60:
                 telemetry.identity_status = "IDENTITY_MISMATCH"
@@ -354,6 +352,27 @@ class SecurityOrchestrator:
             protected_identity=protected_identity,
             policy=policy,
         )
+
+        # 3.2 Transcript-Driven Credential Exposure Detection
+        transcript_lower = (effective_transcript or call.accumulated_transcript or "").lower()
+        has_otp_intent = (
+            telemetry.intent in ("OTP_REQUEST", "CREDENTIAL_REQUEST")
+            or any(kw in transcript_lower for kw in ("otp", "password", "pin", "credential", "verification code", "cvv"))
+        )
+        has_spoken_code = bool(
+            re.search(r"\b\d{4,8}\b", transcript_lower)
+            or re.search(r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine)(?:\s+(?:zero|one|two|three|four|five|six|seven|eight|nine)){3,7}\b", transcript_lower)
+            or re.search(r"\b(?:\d\s*){4,8}\b", transcript_lower)
+        )
+        if has_otp_intent and has_spoken_code:
+            policy_eval.risk_score = max(policy_eval.risk_score, 94.0)
+            policy_eval.risk_level = "CRITICAL"
+            policy_eval.should_create_incident = True
+            policy_eval.should_warn_user = True
+            exposure_msg = "POSSIBLE CREDENTIAL EXPOSURE: Sensitive authentication information (OTP / credentials) may have been disclosed during this call."
+            if exposure_msg not in policy_eval.reasons:
+                policy_eval.reasons.append(exposure_msg)
+            policy_eval.warning_message = exposure_msg
 
         # 4. Update Call Session in Database
         call.total_chunks += 1
@@ -399,12 +418,13 @@ class SecurityOrchestrator:
             if recip:
                 target_individual_name = f"{recip.full_name}" if recip.full_name else recip.username
 
-        # 6. Session-Aware Incident Creation & Deduplication
+        # 6. Session-Aware Incident Creation & Deduplication (Routed to Claimed Org)
         active_incident: Optional[SecurityIncident] = None
-        if policy_eval.should_create_incident and org_id:
+        target_org_id = call.claimed_org_id or call.org_id or org_id
+        if policy_eval.should_create_incident and target_org_id:
             # Query existing incident for this call session
             existing_incident = self.db.query(SecurityIncident).filter_by(
-                session_id=session_id, org_id=org_id
+                session_id=session_id, org_id=target_org_id
             ).first()
 
             claimed_name = protected_identity.full_name if protected_identity else (call.caller_name or call.claimed_speaker_id)
@@ -427,7 +447,7 @@ class SecurityOrchestrator:
             else:
                 # Create brand new Security Incident
                 active_incident = SecurityIncident(
-                    org_id=org_id,
+                    org_id=target_org_id,
                     session_id=session_id,
                     severity=policy_eval.risk_level,
                     scenario=policy_eval.scenario,
@@ -447,7 +467,7 @@ class SecurityOrchestrator:
 
                 # Record incident creation in audit log
                 audit = AuditLog(
-                    org_id=org_id,
+                    org_id=target_org_id,
                     session_id=session_id,
                     event_type="INCIDENT_CREATED",
                     details_json=json.dumps({
@@ -483,20 +503,20 @@ class SecurityOrchestrator:
                 recommended_action=policy_eval.recommended_action,
                 timestamp=utcnow().isoformat(),
             )
-            await self.dispatcher.send_to_call(
-                session_id,
-                {
-                    "event": WebSocketEventType.USER_SECURITY_ALERT,
-                    "timestamp": utcnow().isoformat(),
-                    "data": user_alert.model_dump(),
-                },
-            )
+            alert_event = {
+                "event": WebSocketEventType.USER_SECURITY_ALERT,
+                "timestamp": utcnow().isoformat(),
+                "data": user_alert.model_dump(),
+            }
+            await self.dispatcher.send_to_call(session_id, alert_event)
+            if call.recipient_user_id:
+                await self.dispatcher.send_to_user(call.recipient_user_id, alert_event)
 
         # B. ORGANIZATION SECURITY ALERT (to organization SOC console)
-        if policy_eval.should_alert_org and active_incident and org_id:
+        if policy_eval.should_alert_org and active_incident and target_org_id:
             org_alert = OrganizationSecurityAlertPayload(
                 incident_id=active_incident.incident_id,
-                org_id=org_id,
+                org_id=target_org_id,
                 session_id=session_id,
                 severity=active_incident.severity,
                 scenario=active_incident.scenario,
@@ -519,7 +539,7 @@ class SecurityOrchestrator:
                 },
             )
 
-        # C. PER-CHUNK RISK UPDATE (to active call socket)
+        # C. PER-CHUNK RISK UPDATE (to active call socket and recipient user socket)
         risk_update = RiskUpdatePayload(
             session_id=session_id,
             chunk_id=chunk_id,
@@ -548,14 +568,14 @@ class SecurityOrchestrator:
             latency_ms=telemetry.latency_ms,
             real_time_factor=telemetry.real_time_factor,
         )
-        await self.dispatcher.send_to_call(
-            session_id,
-            {
-                "event": WebSocketEventType.RISK_UPDATE,
-                "timestamp": utcnow().isoformat(),
-                "data": risk_update.model_dump(),
-            },
-        )
+        risk_event = {
+            "event": WebSocketEventType.RISK_UPDATE,
+            "timestamp": utcnow().isoformat(),
+            "data": risk_update.model_dump(),
+        }
+        await self.dispatcher.send_to_call(session_id, risk_event)
+        if call.recipient_user_id:
+            await self.dispatcher.send_to_user(call.recipient_user_id, risk_event)
 
         # D. Automated Call Block if policy dictates
         if policy_eval.is_blocked:

@@ -1,6 +1,7 @@
 import type { User } from '../../types';
 import type { AuthService } from './authService';
 import { config } from '../config';
+import { saveAuthSession, getEffectiveAuthSession, clearAuthSession } from './authStorage';
 
 interface LoginResponse {
   access_token: string;
@@ -81,12 +82,11 @@ export class RealAuthService implements AuthService {
 
     const data: LoginResponse = await res.json();
     this.token = data.access_token;
-    localStorage.setItem('voiceshield_token', data.access_token);
 
     // Fetch user profile and organization details
     const user = await this.fetchUserProfile(data.access_token, data.user);
     this.currentUser = user;
-    localStorage.setItem('voiceshield_user', JSON.stringify(user));
+    saveAuthSession(user, data.access_token);
 
     return { token: this.token, user };
   }
@@ -145,18 +145,20 @@ export class RealAuthService implements AuthService {
   }
 
   getCurrentUser(): User | null {
-    if (!this.currentUser) {
-      try {
-        const saved = localStorage.getItem('voiceshield_user');
-        if (saved) this.currentUser = JSON.parse(saved);
-      } catch {}
+    const session = getEffectiveAuthSession();
+    if (session.user) {
+      this.currentUser = session.user;
+      this.token = session.token;
+      return session.user;
     }
     return this.currentUser;
   }
 
   getToken(): string | null {
-    if (!this.token) {
-      this.token = localStorage.getItem('voiceshield_token');
+    const session = getEffectiveAuthSession();
+    if (session.token) {
+      this.token = session.token;
+      return session.token;
     }
     return this.token;
   }
@@ -168,10 +170,9 @@ export class RealAuthService implements AuthService {
   }
 
   async logout(): Promise<void> {
+    clearAuthSession(this.currentUser);
     this.currentUser = null;
     this.token = null;
-    localStorage.removeItem('voiceshield_token');
-    localStorage.removeItem('voiceshield_user');
   }
 
   getDemoOtp(): string | null {

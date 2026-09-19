@@ -33,7 +33,7 @@ PERSON_CLAIM_PATTERNS = [
     re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+))\s+here\b", re.IGNORECASE),
 ]
 
-# Patterns for organization claims
+# Patterns for organization claims in dialogue
 ORG_CLAIM_PATTERNS = [
     re.compile(
         r"\b(?:calling from|from|with|represent|representing|work for|working for|on behalf of)\s+([A-Za-z0-9\s&]{2,40}?)(?:\.|\,|$|\s+(?:i|we|can|to|for|please|and|regarding|about|calling|need))",
@@ -41,6 +41,30 @@ ORG_CLAIM_PATTERNS = [
     ),
     re.compile(r"\b(?:of)\s+([A-Za-z0-9\s&]{2,35}?)(?:\.|\,|$|\s+(?:i|we|can|to|for|please|and|regarding|about|calling|need))", re.IGNORECASE),
 ]
+
+# Canonical organization alias mapping for robust conversational extraction
+ORGANIZATION_ALIASES = {
+    "org_sbi": {
+        "canonical_name": "State Bank of India",
+        "aliases": ["state bank of india", "sbi", "state bank"],
+    },
+    "org_iob": {
+        "canonical_name": "Indian Overseas Bank",
+        "aliases": ["indian overseas bank", "iob"],
+    },
+    "org_uidai": {
+        "canonical_name": "UIDAI",
+        "aliases": ["uidai", "aadhaar authority", "unique identification authority of india", "aadhaar", "uidai authority"],
+    },
+    "org_police": {
+        "canonical_name": "Police Department",
+        "aliases": ["police department", "cyber crime police", "police", "cyber crime officer", "cyber police", "police officer"],
+    },
+    "org_drdo": {
+        "canonical_name": "DRDO",
+        "aliases": ["drdo", "defence research and development organisation", "defence research and development organization"],
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -115,28 +139,45 @@ def extract_identity_claim(transcript: str, db: Session) -> IdentityClaimResult:
                             break
                     break
 
-    # ── 2. Check for Organization Claims ──────────────────────────────────────
-    # Check regex patterns for claimed org
-    for pat in ORG_CLAIM_PATTERNS:
-        match = pat.search(clean_text)
-        if match:
-            raw_org = match.group(1).strip()
-            # Clean up leading/trailing filler words
-            raw_org = re.sub(r"^(the|an|a)\s+", "", raw_org, flags=re.IGNORECASE)
-            # Filter out non-org words
-            if len(raw_org) > 2 and raw_org.lower() not in ("the bank", "the police", "security", "phone", "here"):
-                found_org_name = raw_org
-                break
-
-    # Check against known registered organizations in DB
-    for org in organizations:
-        org_name_lower = org.name.lower()
-        # Direct mention or matches extracted pattern
-        if org_name_lower in text_lower or (found_org_name and (org_name_lower in found_org_name.lower() or found_org_name.lower() in org_name_lower)):
-            found_org = org
-            found_org_name = org.name
-            is_registered_org = True
+    # ── 2. Check for Organization Claims with Alias Mapping ───────────────────
+    # 2a. Priority check against canonical alias dictionary (SBI, IOB, UIDAI, Police, DRDO)
+    for org_id, org_info in ORGANIZATION_ALIASES.items():
+        for alias in org_info["aliases"]:
+            # Word boundary check for alias (e.g. \bsbi\b, \biob\b)
+            if re.search(rf"\b{re.escape(alias)}\b", text_lower):
+                matched_org = db.query(Organization).filter((Organization.id == org_id) | (Organization.code == org_info["canonical_name"]) | (Organization.name == org_info["canonical_name"])).first()
+                if matched_org:
+                    found_org = matched_org
+                    found_org_name = matched_org.name
+                    is_registered_org = True
+                    break
+                else:
+                    found_org_name = org_info["canonical_name"]
+                    is_registered_org = True
+                    break
+        if found_org:
             break
+
+    # 2b. Check regex patterns for claimed org if not matched by canonical aliases
+    if not found_org_name:
+        for pat in ORG_CLAIM_PATTERNS:
+            match = pat.search(clean_text)
+            if match:
+                raw_org = match.group(1).strip()
+                raw_org = re.sub(r"^(the|an|a)\s+", "", raw_org, flags=re.IGNORECASE)
+                if len(raw_org) > 2 and raw_org.lower() not in ("the bank", "the police", "security", "phone", "here"):
+                    found_org_name = raw_org
+                    break
+
+    # 2c. Check against known registered organizations in DB
+    if not found_org:
+        for org in organizations:
+            org_name_lower = org.name.lower()
+            if org_name_lower in text_lower or (found_org_name and (org_name_lower in found_org_name.lower() or found_org_name.lower() in org_name_lower)):
+                found_org = org
+                found_org_name = org.name
+                is_registered_org = True
+                break
 
     # If person was matched to a ProtectedIdentity with an associated Organization,
     # and no conflicting org was claimed, resolve organization from the protected identity

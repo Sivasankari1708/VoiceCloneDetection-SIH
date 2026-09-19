@@ -8,6 +8,9 @@ import type { IncomingCallData } from '../../types';
 export type UserSocketEvent =
   | { type: 'INCOMING_CALL'; data: IncomingCallData }
   | { type: 'CALL_ACCEPTED'; data: any }
+  | { type: 'CALL_REJECTED'; data: { session_id: string; reason?: string } }
+  | { type: 'RISK_UPDATE'; data: any }
+  | { type: 'USER_SECURITY_ALERT'; data: any }
   | { type: 'CALL_ENDED'; data: { session_id: string; reason?: string } };
 
 class UserSocketService {
@@ -57,6 +60,15 @@ class UserSocketService {
           } else if (eventName === 'CALL_ACCEPTED' && payload.data) {
             console.info('[UserSocket] CALL_ACCEPTED received:', payload.data);
             this.notify({ type: 'CALL_ACCEPTED', data: payload.data });
+          } else if (eventName === 'CALL_REJECTED' && payload.data) {
+            console.info('[UserSocket] CALL_REJECTED received:', payload.data);
+            this.notify({ type: 'CALL_REJECTED', data: payload.data });
+          } else if (eventName === 'RISK_UPDATE' && payload.data) {
+            console.info('[UserSocket] RISK_UPDATE received:', payload.data);
+            this.notify({ type: 'RISK_UPDATE', data: payload.data });
+          } else if (eventName === 'USER_SECURITY_ALERT' && payload.data) {
+            console.info('[UserSocket] USER_SECURITY_ALERT received:', payload.data);
+            this.notify({ type: 'USER_SECURITY_ALERT', data: payload.data });
           } else if (eventName === 'CALL_ENDED' && payload.data) {
             console.info('[UserSocket] CALL_ENDED received:', payload.data);
             this.notify({ type: 'CALL_ENDED', data: payload.data });

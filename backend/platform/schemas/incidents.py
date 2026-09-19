@@ -42,6 +42,10 @@ class IncidentDto(BaseModel):
     severity: str
     scenario: str
     claimed_identity: Optional[str] = None
+    claimed_org_name: Optional[str] = None
+    target_individual: Optional[str] = None
+    attack_type: Optional[str] = None
+    credential_exposure: Optional[bool] = False
     risk_score: float
     synthetic_probability: Optional[float] = None
     speaker_similarity: Optional[float] = None

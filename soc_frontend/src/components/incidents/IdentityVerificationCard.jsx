@@ -11,67 +11,67 @@ export function IdentityVerificationCard({ identityDetails, claimedIdentity }) {
   const statusMeta = formatIdentityVerification(identityDetails.verification);
 
   return (
-    <Card title="Identity Biometric Verification (ECAPA-TDNN)">
-      <div className="font-mono text-xs space-y-4">
+    <Card title="Voice Authenticity & Reference Verification">
+      <div className="font-sans text-xs space-y-4">
         {!hasProfile ? (
-          <div className="p-3 bg-amber-950/20 border border-amber-800/60 rounded text-amber-300 flex items-start gap-2.5">
-            <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 flex items-start gap-2.5">
+            <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <div className="font-semibold">Speaker verification unavailable.</div>
-              <p className="text-2xs text-amber-400/80 mt-0.5">
-                No enrolled voiceprint exists for claimed caller identity. Biometric comparison not performed — do not automatically classify as impersonation solely on this basis.
+              <div className="font-semibold">Reference profile unavailable.</div>
+              <p className="text-2xs text-amber-700 mt-0.5">
+                No enrolled voice reference exists for claimed caller identity. Biometric comparison not performed — do not classify as impersonation solely on this basis.
               </p>
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Claimed Profile */}
-            <div className="p-3 bg-slate-900/60 border border-slate-800 rounded space-y-2">
+            <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl space-y-2">
               <span className="text-2xs text-slate-500 uppercase tracking-wider block font-semibold">
                 Claimed Executive Identity
               </span>
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded bg-red-950/70 border border-red-800 flex items-center justify-center text-red-300 font-bold">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-red-100 border border-red-200 flex items-center justify-center text-red-700 font-bold">
                   {claimedIdentity?.name?.slice(0, 2).toUpperCase() || 'EX'}
                 </div>
                 <div>
-                  <div className="font-semibold text-slate-100">{claimedIdentity?.name || identityDetails.claimed}</div>
-                  <div className="text-2xs text-slate-400">{claimedIdentity?.role || identityDetails.claimed}</div>
+                  <div className="font-semibold text-slate-900">{claimedIdentity?.name || identityDetails.claimed}</div>
+                  <div className="text-2xs text-slate-500">{claimedIdentity?.role || identityDetails.claimed}</div>
                 </div>
               </div>
-              <div className="pt-2 border-t border-slate-800 text-2xs text-slate-400 flex justify-between">
-                <span>Protected Voiceprint:</span>
-                <span className="text-emerald-400 font-semibold">ENROLLED (5 Samples)</span>
+              <div className="pt-2 border-t border-slate-200/60 text-2xs text-slate-600 flex justify-between">
+                <span>Protected Voice Reference:</span>
+                <span className="text-emerald-700 font-semibold">ENROLLED</span>
               </div>
             </div>
 
             {/* Verification Outcome */}
-            <div className="p-3 bg-slate-900/60 border border-slate-800 rounded space-y-2">
+            <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl space-y-2">
               <span className="text-2xs text-slate-500 uppercase tracking-wider block font-semibold">
-                Biometric Outcome
+                Verification Outcome
               </span>
               <div className="flex items-center gap-2">
-                <span className={`px-2.5 py-1 rounded text-xs font-bold ${statusMeta.badge}`}>
+                <span className={`px-2.5 py-1 rounded-md text-xs font-semibold ${statusMeta.badge}`}>
                   {statusMeta.label}
                 </span>
               </div>
-              <div className="pt-2 border-t border-slate-800 grid grid-cols-2 text-2xs text-slate-400">
+              <div className="pt-2 border-t border-slate-200/60 grid grid-cols-2 text-2xs text-slate-600">
                 <div>
-                  <span>Similarity Score: </span>
-                  <strong className="text-red-400">{identityDetails.speakerSimilarity}</strong>
+                  <span>Voice Match: </span>
+                  <strong className="text-red-600">{identityDetails.speakerSimilarity}</strong>
                 </div>
                 <div>
                   <span>Confidence: </span>
-                  <strong className="text-slate-200">{identityDetails.verificationConfidence}</strong>
+                  <strong className="text-slate-900">{identityDetails.verificationConfidence}</strong>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        <div className="text-2xs text-slate-500 border-t border-soc-border pt-2 flex items-center justify-between">
-          <span>Engine: <span className="text-slate-400">SpeechBrain ECAPA-TDNN</span></span>
-          <span>Dimensionality: <span className="text-slate-400">192-D L2-Normalized</span></span>
+        <div className="text-2xs text-slate-500 border-t border-slate-100 pt-2.5 flex items-center justify-between">
+          <span>Verification Subsystem: <span className="text-slate-700 font-medium">Enterprise Voice Authenticity Shield</span></span>
+          <span>Zero-Audio Retention: <span className="text-emerald-700 font-medium">Enforced</span></span>
         </div>
       </div>
     </Card>

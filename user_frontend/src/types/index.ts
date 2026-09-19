@@ -303,6 +303,7 @@ export interface IncomingCallData {
   user_id?: string;
   recipient_user_id?: string;
   caller_name?: string;
+  caller_designation?: string;
   caller_number?: string;
   claimed_speaker_id?: string;
   claimed_identity_id?: string;

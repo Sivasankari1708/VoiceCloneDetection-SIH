@@ -1,4 +1,8 @@
+import { useState, useEffect } from 'react';
 import { useSettings } from '../context/AppContext';
+import { useDemoScenario, MULTILINGUAL_PRESETS } from '../context/DemoScenarioContext';
+import { SUPPORTED_LANGUAGES, warningAudioService } from '../services/warningAudioService';
+import { Volume2 } from 'lucide-react';
 import Card from '../components/ui/Card';
 
 interface ToggleRowProps {
@@ -56,6 +60,13 @@ function CheckboxRow({ label, description, checked, onChange }: CheckboxRowProps
 
 export default function SecuritySettingsPage() {
   const { settings, updateSettings } = useSettings();
+  const { selectedLanguage, setSelectedLanguage } = useDemoScenario();
+  const [audioState, setAudioState] = useState(() => warningAudioService.getState());
+
+  useEffect(() => {
+    return warningAudioService.subscribe((s) => setAudioState(s));
+  }, []);
+
 
   return (
     <div className="max-w-2xl mx-auto p-4 md:p-6 space-y-5">
@@ -151,6 +162,68 @@ export default function SecuritySettingsPage() {
               {settings.mfaEnabled ? 'Enabled' : 'Disabled'}
             </span>
           </div>
+        </div>
+      </Card>
+
+      {/* Spoken Warning Language (Google Cloud TTS) */}
+      <Card header={<span className="text-sm font-semibold text-slate-700">Spoken Warning Language (Google Cloud TTS)</span>}>
+        <p className="text-xs text-slate-500 mb-3">
+          VoiceShield uses server-side Google Cloud Text-to-Speech to dynamically speak security warnings during active calls in your preferred language.
+        </p>
+
+        <div className="space-y-3">
+          <div>
+            <label htmlFor="warning-language-select" className="block text-xs font-semibold text-slate-700 mb-1">
+              Select Warning Language
+            </label>
+            <select
+              id="warning-language-select"
+              value={selectedLanguage.language}
+              onChange={(e) => {
+                const found = MULTILINGUAL_PRESETS.find((p) => p.language === e.target.value);
+                if (found) setSelectedLanguage(found);
+              }}
+              className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+            >
+              {MULTILINGUAL_PRESETS.map((p) => (
+                <option key={p.language} value={p.language}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs">
+            <div className="flex items-center justify-between text-[11px] text-slate-500">
+              <span>Google Cloud TTS Voice:</span>
+              <span className="font-mono font-bold text-blue-600">
+                {SUPPORTED_LANGUAGES.find((l) => l.code === selectedLanguage.code)?.preferredVoice || 'Neural2 / Standard'}
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-600 italic">
+              “{selectedLanguage.scriptText}”
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              warningAudioService.initAudioPlayback();
+              warningAudioService.playSecurityWarning(
+                'CRITICAL',
+                selectedLanguage.code || selectedLanguage.language,
+                true
+              );
+            }}
+            className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center gap-2 transition cursor-pointer shadow-xs"
+          >
+            <Volume2 size={15} className={audioState.isSpeaking ? 'animate-pulse text-emerald-300' : ''} />
+            <span>
+              {audioState.isSpeaking
+                ? `Speaking Warning in ${selectedLanguage.language}...`
+                : `Test Warning Audio in ${selectedLanguage.language}`}
+            </span>
+          </button>
         </div>
       </Card>
     </div>

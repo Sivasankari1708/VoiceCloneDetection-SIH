@@ -1,7 +1,9 @@
-import React from 'react';
-import { AlertTriangle, ShieldAlert, PhoneOff, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { AlertTriangle, ShieldAlert, PhoneOff, X, Volume2 } from 'lucide-react';
 import type { SeverityLevel } from '../../types';
 import Button from '../ui/Button';
+import { useDemoScenario } from '../../context/DemoScenarioContext';
+import { warningAudioService } from '../../services/warningAudioService';
 
 interface RealTimeWarningModalProps {
   isOpen: boolean;
@@ -22,9 +24,22 @@ export const RealTimeWarningModal: React.FC<RealTimeWarningModalProps> = ({
   onHangUp,
   onDismiss,
 }) => {
+  const { selectedLanguage } = useDemoScenario();
+  const [audioState, setAudioState] = useState(() => warningAudioService.getState());
+
+  useEffect(() => {
+    return warningAudioService.subscribe((state) => {
+      setAudioState(state);
+    });
+  }, []);
+
   if (!isOpen) return null;
 
   const isCritical = severity === 'CRITICAL';
+  const localizedScript = warningAudioService.getWarningScript(
+    isCritical ? 'CRITICAL' : 'HIGH',
+    selectedLanguage.code || selectedLanguage.language
+  );
 
   return (
     <div className="fixed top-20 right-4 sm:right-6 z-50 max-w-md w-[calc(100%-2rem)] sm:w-[420px] pointer-events-none animate-fade-in-down">
@@ -81,16 +96,24 @@ export const RealTimeWarningModal: React.FC<RealTimeWarningModalProps> = ({
             id="warning-modal-desc"
             className="mt-4 p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5"
           >
-            <p className="text-sm font-semibold text-rose-300 leading-snug">
-              Caller is suspected of AI voice clone impersonation. Do not share OTPs, passwords, or approve financial transfers.
-            </p>
+            {/* Matching localized warning script */}
+            <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-500/30">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-rose-300 mb-1 flex items-center justify-between">
+                <span>Spoken Warning ({selectedLanguage.language})</span>
+                <span className="text-[10px] text-emerald-400 font-mono">Dynamic TTS Active</span>
+              </div>
+              <p className="text-xs font-semibold text-rose-100 italic leading-relaxed">
+                “{localizedScript}”
+              </p>
+            </div>
+
             <p className="text-xs text-slate-300 leading-relaxed">
               {message ||
                 'Voice biometric analysis detected synthetic acoustic artifacts consistent with an AI voice clone.'}
             </p>
 
             {/* Government / Organisation Policy Notice */}
-            <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-900/60 text-[11px] text-rose-200/90 leading-relaxed">
+            <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-rose-200/90 leading-relaxed">
               <span className="font-bold text-rose-300 block mb-0.5">⚠️ Organisation Verification Policy:</span>
               Citizens cannot directly request verification from a government organisation or public authority. An official Security Incident has been escalated to the organisation&apos;s SOC. Please hang up and wait until the incident is resolved by the organisation.
             </div>
@@ -103,7 +126,27 @@ export const RealTimeWarningModal: React.FC<RealTimeWarningModalProps> = ({
             </div>
           </div>
 
-          <div className="mt-5 flex flex-col gap-2.5">
+          <div className="mt-4 flex flex-col gap-2.5">
+            {/* Manual Play / Replay Fallback Button */}
+            <button
+              type="button"
+              onClick={() => {
+                warningAudioService.playSecurityWarning(
+                  isCritical ? 'CRITICAL' : 'HIGH',
+                  selectedLanguage.code || selectedLanguage.language,
+                  true
+                );
+              }}
+              className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-blue-600/90 hover:bg-blue-600 text-white flex items-center justify-center gap-2 border border-blue-400/30 shadow-xs cursor-pointer transition"
+            >
+              <Volume2 size={15} className={audioState.isSpeaking ? 'animate-pulse text-emerald-300' : ''} />
+              <span>
+                {audioState.isSpeaking
+                  ? `Speaking Warning in ${selectedLanguage.language}...`
+                  : `Play Warning (${selectedLanguage.language})`}
+              </span>
+            </button>
+
             <Button
               variant="danger"
               className="w-full py-3 text-sm font-bold bg-rose-600 hover:bg-rose-500 shadow-lg shadow-rose-950/60 flex items-center justify-center gap-2"

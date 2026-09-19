@@ -35,6 +35,16 @@ def list_protected_identities(
     return [ProtectedIdentityDto(**i.to_dict()) for i in identities]
 
 
+@router.get("/by-org/{org_id}", response_model=List[ProtectedIdentityDto])
+def list_protected_identities_by_org(
+    org_id: str,
+    db: Session = Depends(get_db),
+):
+    """List protected demo identities for a given organization (used by Attack Simulator)."""
+    identities = db.query(ProtectedIdentity).filter_by(org_id=org_id, is_active=True).all()
+    return [ProtectedIdentityDto(**i.to_dict()) for i in identities]
+
+
 @router.post("", response_model=ProtectedIdentityDto, status_code=status.HTTP_201_CREATED)
 def create_protected_identity(
     req: ProtectedIdentityCreateDto,

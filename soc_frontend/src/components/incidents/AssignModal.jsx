@@ -30,19 +30,19 @@ export function AssignModal({ isOpen, onClose, incident, onAssign }) {
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={`Assign Incident ${incident.id}`} maxWidth="max-w-md">
-      <form onSubmit={handleSubmit} className="space-y-4 font-mono text-xs">
+      <form onSubmit={handleSubmit} className="space-y-4 font-sans text-xs">
         <div>
-          <label className="text-2xs text-slate-400 uppercase tracking-wider block font-semibold mb-2">
+          <label className="text-2xs text-slate-500 uppercase tracking-wider block font-semibold mb-2">
             Select SOC Analyst
           </label>
           <div className="space-y-2">
             {analysts.map((a) => (
               <label
                 key={a.name}
-                className={`flex items-center justify-between p-3 rounded border cursor-pointer transition-colors ${
+                className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-colors ${
                   analyst === a.name
-                    ? 'border-soc-accent bg-soc-accent/10 text-slate-100'
-                    : 'border-slate-800 bg-slate-900/40 hover:bg-slate-900/80 text-slate-400'
+                    ? 'border-blue-600 bg-blue-50/50 text-slate-900'
+                    : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
                 }`}
               >
                 <div className="flex items-center gap-2.5">
@@ -52,14 +52,14 @@ export function AssignModal({ isOpen, onClose, incident, onAssign }) {
                     value={a.name}
                     checked={analyst === a.name}
                     onChange={(e) => setAnalyst(e.target.value)}
-                    className="accent-soc-accent"
+                    className="accent-blue-600"
                   />
                   <div>
-                    <div className="font-semibold text-xs text-slate-200">{a.name}</div>
+                    <div className="font-semibold text-xs text-slate-900">{a.name}</div>
                     <div className="text-2xs text-slate-500">{a.role}</div>
                   </div>
                 </div>
-                <span className="text-2xs text-slate-500 font-mono">
+                <span className="text-2xs text-slate-500">
                   {a.activeCount} active cases
                 </span>
               </label>
@@ -67,7 +67,7 @@ export function AssignModal({ isOpen, onClose, incident, onAssign }) {
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-soc-border">
+        <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200">
           <Button variant="outline" size="sm" onClick={onClose} disabled={isSubmitting}>
             Cancel
           </Button>
@@ -79,3 +79,4 @@ export function AssignModal({ isOpen, onClose, incident, onAssign }) {
     </Modal>
   );
 }
+

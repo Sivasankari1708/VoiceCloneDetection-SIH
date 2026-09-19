@@ -110,16 +110,38 @@ def list_calls(
     status_filter: Optional[str] = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    user: User = Depends(get_current_user),
+    user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
     """List call sessions for the user or organization."""
-    if user.role in ("ADMIN", "SOC_ANALYST", "SECURITY_ANALYST"):
+    # Clean up stale ringing sessions older than 45 seconds
+    now = utcnow()
+    stale_cutoff = now.timestamp() - 45.0
+    stale_calls = db.query(CallSession).filter(
+        CallSession.status == "RINGING",
+    ).all()
+    for sc in stale_calls:
+        if sc.start_time and sc.start_time.timestamp() < stale_cutoff:
+            sc.status = "REJECTED"
+            sc.end_time = now
+    if stale_calls:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+
+    if user and user.role in ("ADMIN", "SOC_ANALYST", "SECURITY_ANALYST"):
         query = db.query(CallSession).filter_by(org_id=user.org_id)
-    else:
+    elif user:
         query = db.query(CallSession).filter(
-            or_(CallSession.recipient_user_id == user.id, CallSession.user_id == user.id)
+            or_(
+                CallSession.recipient_user_id == user.id,
+                CallSession.user_id == user.id,
+                CallSession.recipient_user_id == None,
+            )
         )
+    else:
+        query = db.query(CallSession)
     if status_filter:
         query = query.filter_by(status=status_filter)
 
@@ -210,18 +232,53 @@ async def accept_call(
     }
     await dispatcher.send_to_call(session_id, accepted_event)
 
-    # Also notify caller's personal user socket if caller is known
-    if call.user_id:
-        await dispatcher.send_to_user(call.user_id, accepted_event)
+    # Also notify caller and recipient personal user sockets
+    recipients_to_notify = {uid for uid in [call.recipient_user_id, call.user_id] if uid}
+    for uid in recipients_to_notify:
+        await dispatcher.send_to_user(uid, accepted_event)
 
     log.info("[CallsAPI] Call session '%s' accepted. Status: ACTIVE.", session_id)
+    return CallSessionDto(**call.to_dict())
+
+
+@router.post("/{session_id}/decline", response_model=CallSessionDto)
+async def decline_call(
+    session_id: str,
+    user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Transition ringing call session to REJECTED and notify caller/participants."""
+    call = db.query(CallSession).filter_by(session_id=session_id).first()
+    if not call:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call session not found.")
+
+    call.status = "REJECTED"
+    call.end_time = utcnow()
+    db.commit()
+    db.refresh(call)
+
+    # Broadcast CALL_REJECTED to call stream WebSockets
+    dispatcher = AlertDispatcher.get_instance()
+    declined_event = {
+        "event": WebSocketEventType.CALL_REJECTED,
+        "timestamp": utcnow().isoformat(),
+        "data": call.to_dict(),
+    }
+    await dispatcher.send_to_call(session_id, declined_event)
+
+    # Notify caller and recipient personal user sockets
+    recipients_to_notify = {uid for uid in [call.recipient_user_id, call.user_id] if uid}
+    for uid in recipients_to_notify:
+        await dispatcher.send_to_user(uid, declined_event)
+
+    log.info("[CallsAPI] Call session '%s' declined. Status: REJECTED.", session_id)
     return CallSessionDto(**call.to_dict())
 
 
 @router.post("/{session_id}/end", response_model=CallSummaryDto)
 async def end_call(
     session_id: str,
-    req: CallEndRequest,
+    req: Optional[CallEndRequest] = None,
     user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
@@ -232,9 +289,10 @@ async def end_call(
 
     effective_user = _resolve_call_user(user, db)
     orchestrator = SecurityOrchestrator(db=db)
+    reason = req.reason if (req and req.reason) else "NORMAL_HANGUP"
     summary = await orchestrator.end_call_session(
         session_id=session_id,
-        reason=req.reason or "NORMAL_HANGUP",
+        reason=reason,
         actor_id=effective_user.id,
     )
     if not summary:
@@ -249,7 +307,7 @@ async def end_call(
             {
                 "event": WebSocketEventType.CALL_ENDED,
                 "timestamp": utcnow().isoformat(),
-                "data": {"session_id": session_id, "reason": req.reason or "NORMAL_HANGUP"},
+                "data": {"session_id": session_id, "reason": reason},
             },
         )
 
@@ -365,6 +423,25 @@ async def report_call_risk(
                 "data": org_alert_data,
             },
         )
+
+    # Dispatch RISK_UPDATE to both the call room and recipient's personal WebSocket
+    dispatcher = AlertDispatcher.get_instance()
+    user_alert_data = {
+        "session_id": session_id,
+        "risk_score": call.current_risk_score,
+        "risk_level": call.current_risk_level,
+        "claimed_identity": claimed_identity,
+        "reasons": reasons,
+        "timestamp": utcnow().isoformat(),
+    }
+    risk_event = {
+        "event": WebSocketEventType.RISK_UPDATE,
+        "timestamp": utcnow().isoformat(),
+        "data": user_alert_data,
+    }
+    await dispatcher.send_to_call(session_id, risk_event)
+    if call.recipient_user_id:
+        await dispatcher.send_to_user(call.recipient_user_id, risk_event)
 
     return {
         "status": "ok",

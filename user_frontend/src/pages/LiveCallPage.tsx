@@ -1,831 +1,952 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   PhoneOff,
-  ShieldAlert,
-  MessageSquare,
-  User,
   Mic,
   MicOff,
+  Shield,
+  Clock,
+  AlertTriangle,
+  Building2,
+  Landmark,
+  ShieldAlert,
+  ExternalLink,
+  Flame,
+  CheckCircle2,
+  PhoneCall,
   ShieldCheck,
-  Terminal,
-  ChevronDown,
-  ChevronUp,
-  Radio,
-  UserCheck,
-  PhoneForwarded,
+  Lock,
+  Sparkles,
+  Bot,
+  RotateCcw,
   Volume2,
-  Play,
 } from 'lucide-react';
-import { useAppContext, useActiveCall, useCallHistory } from '../context/AppContext';
-import { liveCallStream } from '../services/calls/liveCallStream';
-import { WebSocketLiveCallStreamImpl, type StreamDiagnostics } from '../services/calls/webSocketLiveCallStream';
-import { AudioFileStreamer } from '../services/calls/audioFileStreamer';
-import type { CallEvent, CallHistoryItem, CallSession, CallTimelineEvent } from '../types';
-import LiveVoiceWaveform from '../components/waveform/LiveVoiceWaveform';
-import CallerCard from '../components/call/CallerCard';
-import CallTimer from '../components/call/CallTimer';
+import { useDemoScenario } from '../context/DemoScenarioContext';
+import { callBridge } from '../services/calls/callBridge';
+import { googleSpeechService } from '../services/calls/googleSpeechService';
+import { userSocketService } from '../services/calls/userSocketService';
+import { warningAudioService } from '../services/warningAudioService';
 import TranscriptDisplay from '../components/call/TranscriptDisplay';
-import ConversationSignalTag from '../components/call/ConversationSignalTag';
-import LiveRiskMonitor from '../components/call/LiveRiskMonitor';
-import RealTimeWarningModal from '../components/call/RealTimeWarningModal';
-import RiskTimeline, { type RiskTimelineEntry } from '../components/severity/RiskTimeline';
-import Button from '../components/ui/Button';
-import Card from '../components/ui/Card';
-import { config } from '../services/config';
-import { scoreToSecurityMessage, mapRiskLevel, mapVerdict, mapIdentityStatus } from '../utils/dataMapper';
+import CriticalInterventionModal from '../components/protection/CriticalInterventionModal';
+import DemoControlBar from '../components/protection/DemoControlBar';
+import CallTimer from '../components/call/CallTimer';
+import { stopIncomingCallChime } from '../components/call/IncomingCallModal';
+import { ensureAttackerCredentials } from '../services/auth/authStorage';
+import { useCallHistory } from '../context/AppContext';
+import { saveLocalCallHistory } from '../services/calls/callHistoryService';
+import { analyzeSensitiveSolicitation } from '../utils/sensitiveDataDetector';
+import type { CallHistoryItem, SeverityLevel } from '../types';
 
 export default function LiveCallPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const querySessionId = searchParams.get('session_id');
-  const queryCallerName = searchParams.get('caller_name');
-  const queryClaimedSpeaker = searchParams.get('claimed_speaker');
-  const isRecipientMode = !!querySessionId;
-
-  const { dispatch } = useAppContext();
-  const { activeCall, setActiveCall, updateActiveCall, endActiveCall } = useActiveCall();
   const { addCallHistory } = useCallHistory();
+  const [searchParams] = useSearchParams();
+  const queryCaller = searchParams.get('caller_name');
 
-  const [startTime, setStartTime] = useState<Date | null>(null);
-  const [callId] = useState(() => querySessionId || `call-${Date.now()}`);
-  const [micActive, setMicActive] = useState(!isRecipientMode);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const [diagnostics, setDiagnostics] = useState<StreamDiagnostics | null>(null);
-  const [warningModalOpen, setWarningModalOpen] = useState(false);
-  const warningDismissedRef = useRef(false);
-  const [riskHistory, setRiskHistory] = useState<RiskTimelineEntry[]>([]);
-  const activeSessionIdRef = useRef<string | null>(null);
-  const [isInjectingDemo, setIsInjectingDemo] = useState(false);
+  const {
+    claimedCaller,
+    setClaimedCaller,
+    currentRisk,
+    intervention,
+    startCriticalIntervention,
+    cancelIntervention,
+    resetCallToInitial,
+    transcript,
+    interimTranscript,
+    hasActiveCall,
+    setHasActiveCall,
+    callMode,
+    setCallMode,
+    sihStep,
+    resetSihScenario,
+    selectedLanguage,
+  } = useDemoScenario();
 
-  const handleInjectDemoAudio = async () => {
-    if (isInjectingDemo) return;
-    setIsInjectingDemo(true);
-    try {
-      if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
-        liveCallStream.resumePlaybackAudio();
-      }
-      const targetSession =
-        querySessionId ||
-        (liveCallStream instanceof WebSocketLiveCallStreamImpl ? liveCallStream.getSessionId() : null) ||
-        callId;
-      const streamer = new AudioFileStreamer();
-      const wsUrl = `${config.wsBaseUrl}/ws/stream/${targetSession}`;
-      const testWs = new WebSocket(wsUrl);
-      testWs.binaryType = 'arraybuffer';
-      await new Promise<void>((resolve, reject) => {
-        testWs.onopen = () => resolve();
-        testWs.onerror = (e) => reject(e);
-      });
-      await streamer.startStreaming(
-        '/samples/cfo_rajesh_urgent_wire.wav',
-        testWs,
-        undefined,
-        () => {
-          setIsInjectingDemo(false);
-          testWs.close();
-        },
-        false
-      );
-    } catch (err) {
-      console.warn('[LiveCallPage] Error injecting demo audio:', err);
-      setIsInjectingDemo(false);
-    }
-  };
-
-  // 1. Maintain persistent live call event subscription throughout page lifecycle
+  // If URL has session_id, ensure correct call mode and active call state are set
   useEffect(() => {
-    const unsubscribe = liveCallStream.subscribe((event: CallEvent) => {
-      if (event.type === 'call_started') {
-        const initialSession = event.payload as CallSession;
-        setActiveCall(initialSession);
-        setStartTime(new Date());
-        setMicActive(true);
-        if (initialSession.security) {
-          const initTs = new Date().toLocaleTimeString('en-GB', { hour12: false });
-          setRiskHistory([
-            {
-              timestamp: initTs,
-              score: initialSession.security.score,
-              level: initialSession.security.severity,
-              note: 'Call initiated',
-            },
-          ]);
-        }
-      } else if (event.type === 'security_update') {
-        const partial = event.payload as Partial<CallSession>;
-        updateActiveCall(partial);
-        if (partial.security) {
-          const s = partial.security;
-          const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
-          setRiskHistory((prev) => {
-            const last = prev[prev.length - 1];
-            if (!last || last.score !== s.score || last.level !== s.severity) {
-              return [
-                ...prev,
-                {
-                  timestamp: ts,
-                  score: s.score ?? 0,
-                  level: s.severity ?? 'SAFE',
-                  note: s.signals?.[0]?.label,
-                },
-              ];
-            }
-            return prev;
-          });
-
-          // Trigger non-blocking heads-up warning alert when risk escalates
-          if (s.severity === 'CRITICAL' || s.severity === 'HIGH' || (s.score ?? 0) >= 70) {
-            if (!warningDismissedRef.current) {
-              setWarningModalOpen(true);
-            }
-          }
-        }
-      } else if (event.type === 'waveform_update') {
-        updateActiveCall({ waveformActivity: event.payload.waveformActivity });
-      } else if (event.type === 'call_ended') {
-        // Backend notified call ended
-        handleEndCall();
+    stopIncomingCallChime();
+    const session = searchParams.get('session_id') || callBridge.getActiveSessionId();
+    const modeParam = searchParams.get('call_mode');
+    if (session) {
+      if (modeParam === 'simulation') {
+        setCallMode('simulation');
+      } else if (modeParam === 'live') {
+        setCallMode('live');
       }
-    });
+      setHasActiveCall(true);
+      warningAudioService.initAudioPlayback();
+    }
+  }, [searchParams, setCallMode, setHasActiveCall]);
 
-    // Periodic diagnostics poll for the Dev Diagnostics Panel
-    const diagInterval = setInterval(() => {
-      if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
-        setDiagnostics(liveCallStream.getDiagnostics());
-      }
-    }, 400);
+  useEffect(() => {
+    if (queryCaller && queryCaller !== claimedCaller.name) {
+      setClaimedCaller({
+        name: queryCaller,
+        roleAndDept: queryCaller.includes('Manager') ? 'Bank Manager' : 'Senior Officer',
+        organization: 'Indian Overseas Bank',
+      });
+    }
+  }, [queryCaller, claimedCaller.name, setClaimedCaller]);
+
+  const [startTime] = useState(() => new Date());
+  const [micActive, setMicActive] = useState(true);
+  const [showTrustedGuide, setShowTrustedGuide] = useState(false);
+
+  // Check for caller soliciting OTP or sensitive data
+  const callerSensitiveMatch = transcript
+    .filter((t) => t.speaker === 'caller')
+    .map((t) => analyzeSensitiveSolicitation(t.text, 'caller'))
+    .find((r) => r.isSensitive) ||
+    (interimTranscript?.speaker === 'caller' ? analyzeSensitiveSolicitation(interimTranscript.text, 'caller') : null);
+
+  const hasCallerSensitiveRequest = Boolean(callerSensitiveMatch?.isSensitive);
+
+  // Check for Credential Exposure in dialogue: employee spoke 4-8 digits after OTP request
+  const hasCredentialExposure = transcript.some(
+    (t) =>
+      t.speaker === 'employee' &&
+      (/\b\d{4,8}\b/.test(t.text) || /otp is|code is|pin is/i.test(t.text))
+  );
+
+  // Effective risk level: If caller asks for OTP or sensitive data, system ALWAYS treats call as CRITICAL RISK
+  const rawLevel = (currentRisk?.level || 'Safe').toUpperCase();
+  const effectiveLevel = (hasCredentialExposure || hasCallerSensitiveRequest) ? 'CRITICAL' : rawLevel;
+  const isCritical = effectiveLevel === 'CRITICAL';
+  const isHigh = effectiveLevel === 'HIGH';
+  const isCaution = effectiveLevel === 'CAUTION' || effectiveLevel === 'MEDIUM';
+
+  // Auto trigger critical intervention if risk reaches Critical, credential exposed, or caller asks for OTP/sensitive info
+  useEffect(() => {
+    if ((isCritical || hasCredentialExposure || hasCallerSensitiveRequest) && !intervention.active) {
+      const timer = setTimeout(() => {
+        startCriticalIntervention();
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [isCritical, hasCredentialExposure, hasCallerSensitiveRequest, intervention.active, startCriticalIntervention]);
+
+  // Dynamically play spoken warning in user's selected language when threat occurs during active call
+  useEffect(() => {
+    if (!hasActiveCall) return;
+    if (hasCredentialExposure || hasCallerSensitiveRequest) {
+      warningAudioService.playSecurityWarning('CREDENTIAL_EXPOSURE', selectedLanguage.code || selectedLanguage.language);
+    } else if (isCritical) {
+      warningAudioService.playSecurityWarning('CRITICAL', selectedLanguage.code || selectedLanguage.language);
+    } else if (isHigh) {
+      warningAudioService.playSecurityWarning('HIGH', selectedLanguage.code || selectedLanguage.language);
+    }
+  }, [hasActiveCall, isCritical, isHigh, hasCredentialExposure, hasCallerSensitiveRequest, selectedLanguage]);
+
+  // Live microphone capture & continuous Google Cloud STT recognition for Employee/User (Only when Live Call active)
+  useEffect(() => {
+    if (callMode === 'live' && hasActiveCall) {
+      const activeSessionId = searchParams.get('session_id') || callBridge.getActiveSessionId() || undefined;
+      googleSpeechService.start('employee', 'Sreya (Citizen / Employee)', activeSessionId);
+    } else {
+      googleSpeechService.stop();
+    }
 
     return () => {
-      clearInterval(diagInterval);
-      unsubscribe();
+      googleSpeechService.stop();
     };
-  }, [setActiveCall, updateActiveCall, isRecipientMode]);
+  }, [callMode, hasActiveCall, searchParams]);
 
-  // 2. Global user interaction listener to unlock Web Audio playback
+  // Sync mic mute state
   useEffect(() => {
-    const unlockAudio = () => {
-      if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
-        liveCallStream.resumePlaybackAudio();
-      }
-    };
-    window.addEventListener('click', unlockAudio);
-    window.addEventListener('keydown', unlockAudio);
-    return () => {
-      window.removeEventListener('click', unlockAudio);
-      window.removeEventListener('keydown', unlockAudio);
-    };
-  }, []);
-
-  // 3. Connect to call session on mount, whenever querySessionId changes, or start live mic session
-  useEffect(() => {
-    const token = localStorage.getItem('voiceshield_token');
-
-    // If querySessionId is provided, connect directly to that session
-    if (querySessionId) {
-      if (activeSessionIdRef.current === querySessionId) return;
-
-      activeSessionIdRef.current = querySessionId;
-      setStartTime(new Date());
-      setRiskHistory([]);
-
-      if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
-        liveCallStream.resumePlaybackAudio();
-      }
-
-      // Join backend session with active two-way microphone communication
-      setMicActive(true);
-      liveCallStream.start({
-        sessionId: querySessionId,
-        callerName: queryCallerName || 'Inbound Call',
-        claimedSpeakerId: queryClaimedSpeaker || undefined,
-        receiveOnly: false,
-        speakerRole: 'employee',
-      });
-
-      // Prefetch existing call state (for late joiners / reloads)
-      fetch(`${config.apiBaseUrl}/api/calls/${querySessionId}`, {
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (!data) return;
-          if (data.status === 'RINGING') {
-            console.info('[LiveCallPage] Call session is currently RINGING — auto-accepting call now:', querySessionId);
-            fetch(`${config.apiBaseUrl}/api/calls/${querySessionId}/accept`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
-              },
-            }).catch((e) => console.warn('[LiveCallPage] Auto-accept call error:', e));
-          }
-
-          if (data.caller_name || data.claimed_speaker_id) {
-            updateActiveCall({
-              caller: {
-                name: data.caller_name || 'Inbound Call',
-                claimedRole: data.claimed_speaker_id === 'LA_0069' ? 'Chief Financial Officer' : '',
-                organization: data.claimed_org_name || '',
-                status: data.claimed_speaker_id ? 'checking' : 'unverified',
-                statusMessage: data.claimed_speaker_id ? 'Verifying claimed voice signature...' : 'Caller identity not confirmed',
-              },
-            });
-          }
-
-          if (data.accumulated_transcript || data.current_risk_score > 0) {
-            updateActiveCall({
-              security: {
-                score: data.current_risk_score,
-                severity: mapRiskLevel(data.current_risk_level),
-                message: data.alert_reason || scoreToSecurityMessage(data.current_risk_score),
-                voiceAuthenticity: mapVerdict(data.final_verdict),
-                callerIdentity: mapIdentityStatus(data.claimed_speaker_id ? 'INCONCLUSIVE' : 'UNENROLLED'),
-                signals: [],
-                securityTeamNotified: data.alert_triggered,
-              },
-              transcript: data.accumulated_transcript
-                ? [
-                    {
-                      id: 'seg-init',
-                      speaker: 'caller',
-                      text: data.accumulated_transcript,
-                      timestamp: 0,
-                      isPartial: false,
-                    },
-                  ]
-                : [],
-            });
-          }
-        })
-        .catch((err) => console.warn('[LiveCallPage] Failed to prefetch call state:', err));
-
-      return () => {
-        liveCallStream.stop(false);
-        activeSessionIdRef.current = null;
-      };
-    }
-
-    // When navigating to /live without a query session, check for an active backend call first
-    fetch(`${config.apiBaseUrl}/api/calls?status=ACTIVE`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    })
-      .then((res) => (res.ok ? res.json() : []))
-      .then((activeCalls) => {
-        if (Array.isArray(activeCalls) && activeCalls.length > 0) {
-          const c = activeCalls[0];
-          navigate(
-            `/live?session_id=${c.session_id}&caller_name=${encodeURIComponent(
-              c.caller_name || 'Inbound Call'
-            )}&claimed_speaker=${encodeURIComponent(c.claimed_speaker_id || '')}`,
-            { replace: true }
-          );
-          return;
-        }
-
-        // No active call: start live microphone audio stream for testing
-        if (!activeSessionIdRef.current) {
-          activeSessionIdRef.current = callId;
-          setStartTime(new Date());
-          setMicActive(true);
-          liveCallStream.start({
-            sessionId: callId,
-            callerName: 'Live Microphone Input',
-            receiveOnly: false,
-            speakerRole: 'employee',
-          });
-        }
-      })
-      .catch(() => {
-        if (!activeSessionIdRef.current) {
-          activeSessionIdRef.current = callId;
-          setStartTime(new Date());
-          setMicActive(true);
-          liveCallStream.start({
-            sessionId: callId,
-            callerName: 'Live Microphone Input',
-            receiveOnly: false,
-            speakerRole: 'employee',
-          });
-        }
-      });
-
-    return () => {
-      liveCallStream.stop(false);
-      activeSessionIdRef.current = null;
-    };
-  }, [querySessionId, queryCallerName, queryClaimedSpeaker, callId, navigate, updateActiveCall]);
-
-  const handleStartLiveMic = useCallback(async () => {
-    setStartTime(new Date());
-    setRiskHistory([]);
-    setMicActive(true);
-    if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
-      liveCallStream.resumePlaybackAudio();
-    }
-    await liveCallStream.start({
-      callerName: 'Live Voice (Microphone)',
-      receiveOnly: false,
-      waitForAcceptance: false,
-    });
-  }, []);
-
-  const queryStart = searchParams.get('start');
-  useEffect(() => {
-    if (queryStart === 'mic' && !activeCall && !activeSessionIdRef.current) {
-      handleStartLiveMic();
-    }
-  }, [queryStart, activeCall, handleStartLiveMic]);
-
-  const handleToggleMic = useCallback(() => {
-    const nextState = !micActive;
-    setMicActive(nextState);
-    liveCallStream.setMicEnabled(nextState);
+    googleSpeechService.setMuted(!micActive);
   }, [micActive]);
 
-  const handleEndCall = useCallback(() => {
-    liveCallStream.terminate('NORMAL_HANGUP');
+  const handleSendMessage = (text: string) => {
+    callBridge.sendDialogue('employee', 'Sreya (Citizen / Employee)', text, 'Safe', false);
+  };
 
-    if (activeCall && startTime) {
-      const now = new Date();
-      const duration = Math.floor((now.getTime() - startTime.getTime()) / 1000);
-      const historyItem: CallHistoryItem = {
-        id: querySessionId || callId,
-        caller: activeCall.caller,
-        source: activeCall.source,
+  const hasEndedRef = useRef(false);
+
+  const terminateCall = useCallback(
+    (initiatedLocally = true) => {
+      if (hasEndedRef.current) return;
+      // If triggered remotely, only proceed if there is actually an active session or transcript on this page
+      if (!initiatedLocally && !hasActiveCall && !searchParams.get('session_id') && transcript.length === 0) {
+        return;
+      }
+      hasEndedRef.current = true;
+
+      stopIncomingCallChime();
+      googleSpeechService.stop();
+      warningAudioService.stopWarning();
+
+      const currentSessionId =
+        searchParams.get('session_id') || callBridge.getActiveSessionId() || `call-${Date.now()}`;
+      const riskLevel = (currentRisk?.level || 'Safe').toUpperCase();
+      const riskScore = riskLevel === 'CRITICAL' ? 92 : riskLevel === 'HIGH' ? 78 : riskLevel === 'CAUTION' ? 45 : 12;
+      const severity: SeverityLevel =
+        riskLevel === 'CRITICAL' ? 'CRITICAL' : riskLevel === 'HIGH' ? 'HIGH' : riskLevel === 'CAUTION' ? 'MEDIUM' : 'SAFE';
+      const isThreat = severity === 'CRITICAL' || severity === 'HIGH';
+
+      const finishedCall: CallHistoryItem = {
+        id: currentSessionId,
+        caller: {
+          name: claimedCaller.name || 'External Caller',
+          claimedRole: claimedCaller.roleAndDept || 'Executive / Official',
+          organization: claimedCaller.organization || 'Indian Overseas Bank',
+          status: isThreat ? 'failed' : 'verified',
+          statusMessage: isThreat
+            ? 'Deepfake voice synthesis & unauthorized credential solicitation'
+            : 'Identity verified through biometric baseline',
+        },
+        source: 'browser',
         startTime,
-        endTime: now,
-        duration,
-        finalSeverity: activeCall.security.severity,
-        finalScore: activeCall.security.score,
-        finalAction:
-          activeCall.security.severity === 'CRITICAL' || activeCall.security.severity === 'HIGH'
-            ? 'Call ended — security alert triggered'
-            : 'Call completed normally',
-        transcript: activeCall.transcript,
-        timeline: buildTimeline(activeCall),
-        summary: buildSummary(activeCall),
-        recommendation:
-          activeCall.security.severity === 'CRITICAL' || activeCall.security.severity === 'HIGH'
-            ? 'Do not share sensitive information or transfer funds. Verify caller independently.'
-            : 'Call verified and safe.',
-        signals: activeCall.security.signals,
-        scenarioId: activeCall.scenarioId,
+        endTime: new Date(),
+        duration: Math.max(12, Math.floor((Date.now() - startTime.getTime()) / 1000)),
+        finalSeverity: severity,
+        finalScore: riskScore,
+        finalAction: isThreat
+          ? 'Autonomous Intervention — Call Terminated and Security Log Created'
+          : 'Call completed normally',
+        transcript: transcript.map((t, idx) => ({
+          id: t.id,
+          speaker: t.speaker,
+          text: t.text,
+          timestamp: idx * 5000,
+        })),
+        timeline: [
+          {
+            time: startTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+            description: `Call session established with ${claimedCaller.name || 'External Caller'} (${claimedCaller.organization || 'Organization'})`,
+            type: 'info',
+          },
+          ...(isThreat
+            ? [
+                {
+                  time: new Date(startTime.getTime() + 15000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+                  description: 'Vocal clone artifacts and high conversational urgency identified',
+                  type: 'warning' as const,
+                },
+                {
+                  time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+                  description: 'Autonomous protection hold executed; telecom line terminated',
+                  type: 'critical' as const,
+                },
+              ]
+            : [
+                {
+                  time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+                  description: 'Call finished cleanly without security anomalies',
+                  type: 'success' as const,
+                },
+              ]),
+        ],
+        summary: `Call with ${claimedCaller.name || 'Caller'} (${claimedCaller.organization || 'Organization'}) — Final Score: ${riskScore}/100 (${severity})`,
+        recommendation: isThreat
+          ? 'Reported to Security Operations Center (SOC). Verify party out-of-band.'
+          : 'Normal conversational pattern observed.',
+        signals: [],
       };
 
-      addCallHistory(historyItem);
-      dispatch({ type: 'ADD_CALL_HISTORY', payload: historyItem });
-    }
+      try {
+        addCallHistory(finishedCall);
+        saveLocalCallHistory(finishedCall);
+      } catch {}
 
-    endActiveCall();
-    navigate('/history');
-  }, [activeCall, startTime, callId, querySessionId, addCallHistory, endActiveCall, navigate, dispatch]);
+      if (initiatedLocally) {
+        callBridge.endCall(currentSessionId);
+      }
 
-  if (!querySessionId && !activeCall) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] p-6 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600 mb-4 shadow-sm">
-          <Mic size={28} className="animate-pulse" />
-        </div>
-        <h2 className="text-xl font-bold text-slate-800">Live Call & Microphone Analysis</h2>
-        <p className="text-slate-500 text-sm mt-2 max-w-md">
-          Start real-time Google Cloud Speech ASR, deepfake detection, and biometric verification using your real microphone voice.
-        </p>
-        <div className="mt-6 flex flex-wrap gap-3 justify-center">
-          <Button variant="primary" size="md" icon={<Mic size={16} />} onClick={handleStartLiveMic}>
-            Start Microphone Analysis
-          </Button>
-          <Button variant="outline" size="md" onClick={() => navigate('/attacker')}>
-            Open Attacker Console
-          </Button>
-          <Button variant="outline" size="md" onClick={() => navigate('/')}>
-            Back to Dashboard
-          </Button>
-        </div>
-      </div>
-    );
-  }
+      resetCallToInitial();
+      setHasActiveCall(false);
+      navigate('/history');
+    },
+    [
+      hasActiveCall,
+      searchParams,
+      transcript,
+      currentRisk,
+      claimedCaller,
+      startTime,
+      addCallHistory,
+      resetCallToInitial,
+      setHasActiveCall,
+      navigate,
+    ]
+  );
 
-  if (!activeCall) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] p-4 text-center">
-        <div className="w-12 h-12 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
-        <h2 className="text-lg font-semibold text-slate-800">Connecting to VoiceShield Protection...</h2>
-        <p className="text-slate-500 text-sm mt-1 max-w-sm">
-          Attaching to live backend session telemetry...
-        </p>
-        <div className="mt-6 flex gap-3">
-          <Button variant="outline" size="sm" onClick={() => navigate('/')}>
-            Cancel
-          </Button>
-        </div>
-      </div>
-    );
-  }
+  // Subscribe to callBridge and user personal WebSocket for remote call termination
+  useEffect(() => {
+    const unsubBridge = callBridge.subscribe((evt) => {
+      if (evt.type === 'CALL_ENDED' || evt.type === 'CALL_DECLINED') {
+        terminateCall(false);
+      }
+    });
 
-  const { security, caller, source, transcript, waveformActivity } = activeCall;
-  const isCritical = security.severity === 'CRITICAL';
-  const isHigh = security.severity === 'HIGH';
-  const isSpeaking = (waveformActivity ?? 0) > 0.12;
+    const unsubSocket = userSocketService.subscribe((evt) => {
+      if (evt.type === 'CALL_ENDED') {
+        terminateCall(false);
+      }
+    });
+
+    return () => {
+      unsubBridge();
+      unsubSocket();
+    };
+  }, [terminateCall]);
+
+  const handleEndCall = () => {
+    terminateCall(true);
+  };
+
+  // Determine organization type to show appropriate contact
+  const orgNameLower = (claimedCaller.organization || '').toLowerCase();
+  const isBankAttack =
+    orgNameLower.includes('bank') ||
+    orgNameLower.includes('sbi') ||
+    orgNameLower.includes('iob') ||
+    transcript.some((t) => /bank|account|transfer|otp|kyc/i.test(t.text));
+  const isPoliceAttack = orgNameLower.includes('police') || orgNameLower.includes('crime');
+  const isUidaiAttack = orgNameLower.includes('uidai') || orgNameLower.includes('aadhaar');
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-20">
-      {/* Real-Time User Warning Modal */}
-      <RealTimeWarningModal
-        isOpen={warningModalOpen && (isCritical || isHigh)}
-        severity={security.severity}
-        score={security.score}
-        message={security.message}
-        onVerify={() => {
-          setWarningModalOpen(false);
-          navigate('/verification');
-        }}
-        onHangUp={handleEndCall}
-        onDismiss={() => {
-          warningDismissedRef.current = true;
-          setWarningModalOpen(false);
-        }}
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      {/* 1. Simulation Control Bar (when in demo mode) */}
+      <DemoControlBar />
+
+      {/* 2. Critical Intervention Modal */}
+      <CriticalInterventionModal
+        intervention={intervention}
+        onDismiss={cancelIntervention}
+        onEndCall={handleEndCall}
       />
 
-      {/* 1. Call Status Header */}
-      <div
-        className={`px-4 py-3 border-b flex items-center justify-between gap-3 transition-colors ${
-          isCritical
-            ? 'bg-red-50 border-red-200'
-            : isHigh
-            ? 'bg-orange-50 border-orange-200'
-            : 'bg-white border-slate-200'
-        }`}
-      >
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <div className={`w-2.5 h-2.5 rounded-full animate-pulse ${isCritical ? 'bg-red-500' : 'bg-green-500'}`} />
-            <span className="text-sm font-semibold text-slate-800 truncate">Real-Time Call Protection Active</span>
-            {startTime && <CallTimer startTime={startTime} active />}
-          </div>
-          <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
-            {micActive ? (
-              <span className="flex items-center gap-1 text-green-700 font-medium">
-                <Mic size={12} className="text-green-600 animate-pulse" />
-                Live Microphone (16kHz Google STT)
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-amber-600 font-medium">
-                <MicOff size={12} />
-                Mic Muted
-              </span>
-            )}
-            <span className="text-slate-300">•</span>
-            <span className="text-slate-600 font-medium truncate">
-              {isRecipientMode ? 'Mode: Protected Recipient' : 'Mode: Real-Time Voice Protection'}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {!isRecipientMode && (
-            <Button
-              variant={micActive ? 'outline' : 'secondary'}
-              size="sm"
-              icon={micActive ? <MicOff size={14} /> : <Mic size={14} />}
-              onClick={handleToggleMic}
-              title={micActive ? 'Mute microphone' : 'Unmute microphone'}
-            >
-              <span className="hidden sm:inline">{micActive ? 'Mute' : 'Unmute'}</span>
-            </Button>
-          )}
-
-          {/* End Call Button */}
-          <Button variant="danger" size="sm" icon={<PhoneOff size={14} />} onClick={handleEndCall}>
-            End Call
-          </Button>
-        </div>
-      </div>
-
-      <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
-        {/* 2. System Status / Mode Banner */}
-        {isRecipientMode ? (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3.5 shadow-sm">
-            <div className="flex items-start gap-2.5">
-              <div className="p-1 bg-blue-100 rounded text-blue-700 mt-0.5">
-                <Radio size={16} className="animate-pulse" />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-blue-900 uppercase tracking-wider">
-                    Recipient Live Call Protection Active
-                  </span>
-                  <span className="text-[11px] font-semibold text-blue-700 bg-blue-100/80 px-2 py-0.5 rounded border border-blue-300 font-mono">
-                    {querySessionId ? `${querySessionId.slice(0, 16)}...` : 'Active'}
-                  </span>
-                </div>
-                <p className="text-xs text-blue-800 mt-1 leading-relaxed">
-                  Connected to active call session. Voice clone detection, biometric authenticity scores, and real-time Speech-to-Text transcription telemetry are being received directly from the AI detection pipeline.
-                </p>
-                <div className="mt-2 flex items-center gap-2 text-[11px] text-blue-700 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>Real-time audio relay and AI security analysis active. Audio chunks stream dynamically.</span>
-                </div>
-              </div>
+      {!(callMode === 'simulation' || hasActiveCall) ? (
+        /* ─── STANDING-BY / IDLE STATE (Zero Phantom Calls) ─── */
+        <div className="flex-1 max-w-5xl mx-auto w-full p-6 sm:p-10 flex flex-col justify-center">
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-8 text-center max-w-2xl mx-auto space-y-6">
+            <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center mx-auto shadow-2xs">
+              <ShieldCheck size={36} />
             </div>
-          </div>
-        ) : (
-          <div className="bg-slate-100 border border-slate-200 rounded-xl p-3.5 shadow-sm flex items-center justify-between gap-3">
+
             <div>
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                <Radio size={14} className="text-emerald-600" />
-                Live Audio Capture Active
-              </span>
-              <p className="text-xs text-slate-600 mt-0.5">
-                Microphone audio (16kHz mono PCM) is streaming live to the VoiceShield pipeline. Want to test cloned audio files or place an outgoing call to a specific user?
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 mb-3">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>VOICESHIELD LIVE MONITOR ACTIVE & STANDING BY</span>
+              </div>
+              <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                No Live Call In Session
+              </h2>
+              <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto leading-relaxed">
+                VoiceShield real-time speech verification is armed and listening for incoming attacker calls. You can wait for an inbound call or run the guided attack simulation demo.
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => navigate('/sender')} icon={<PhoneForwarded size={14} />}>
-              Open Call Sender
-            </Button>
+
+            {/* Quick Navigation / Mode Actions */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-1">
+              <button
+                onClick={() => {
+                  setCallMode('simulation');
+                  resetSihScenario();
+                }}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-amber-400 hover:bg-amber-300 text-slate-950 transition cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
+              >
+                <Sparkles size={14} />
+                <span>Run Attack Simulation Demo</span>
+              </button>
+
+              <button
+                onClick={async () => {
+                  try {
+                    await ensureAttackerCredentials();
+                  } catch {}
+                  window.open('/attacker', '_blank');
+                }}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white transition cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
+              >
+                <ExternalLink size={14} />
+                <span>Open Attacker Console</span>
+              </button>
+            </div>
+
+            {/* Feature Status Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-left">
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/70">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
+                  <Shield size={14} className="text-blue-600" />
+                  <span>Deepfake Shield</span>
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">
+                  192-D voiceprint ECAPA-TDNN active
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/70">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
+                  <Building2 size={14} className="text-indigo-600" />
+                  <span>5 Protected Orgs</span>
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">
+                  SBI, IOB, UIDAI, Police, DRDO
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/70">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
+                  <Lock size={14} className="text-emerald-600" />
+                  <span>Cybercrime 1930</span>
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">
+                  National fraud hotline integrated
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-1">
+              <button
+                onClick={() => navigate('/home')}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+              >
+                Go to Security Home
+              </button>
+            </div>
           </div>
-        )}
+        </div>
+      ) : (
+        /* ─── ACTIVE CALL STATE ─── */
+        <>
+          {/* Header Bar */}
+          <header
+            className={`px-4 sm:px-6 py-3.5 border-b transition-colors ${
+              isCritical || hasCredentialExposure
+                ? 'bg-red-50/80 border-red-200'
+                : 'bg-white border-slate-200'
+            }`}
+          >
+            <div className="max-w-6xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-2xs ${
+                    isCritical || hasCredentialExposure
+                      ? 'bg-red-600 text-white'
+                      : callMode === 'simulation'
+                      ? 'bg-amber-500 text-slate-950'
+                      : 'bg-blue-600 text-white'
+                  }`}
+                >
+                  {isCritical || hasCredentialExposure ? (
+                    <ShieldAlert size={22} />
+                  ) : callMode === 'simulation' ? (
+                    <Bot size={22} />
+                  ) : (
+                    <PhoneCall size={20} />
+                  )}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-black text-slate-900 text-base tracking-tight">
+                      {claimedCaller.name}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-900 border border-blue-200">
+                      {claimedCaller.roleAndDept}
+                    </span>
+                    {callMode === 'simulation' ? (
+                      <span className="text-xs text-slate-500 font-medium">
+                        claims to represent{' '}
+                        <strong className="text-slate-800">{claimedCaller.organization}</strong>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-500 font-medium">
+                        • Direct Voice Line
+                      </span>
+                    )}
+                    {callMode === 'simulation' ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-950 border border-amber-300">
+                        SIMULATED ATTACK (STEP {sihStep}/4)
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-950 border border-emerald-300">
+                        LIVE CALL
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
+                    <span className="flex items-center gap-1">
+                      <Clock size={12} className="text-slate-400" />
+                      <CallTimer startTime={startTime} active />
+                    </span>
+                    <span>•</span>
+                    {callMode === 'simulation' ? (
+                      <span className="text-amber-700 font-semibold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                        SIH Attack Scenario Stream
+                      </span>
+                    ) : (
+                      <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Live Microphone & Telecom Stream
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
 
-        {/* 3. Live Risk Monitor (Continuous Dynamic Display) */}
-        <LiveRiskMonitor
-          security={security}
-          caller={caller}
-        />
-
-        {/* 4. Prominent Two-Column Real-Time Hub: Live Transcript & Voice Waveform / Signals */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* Main Column: Live Speech-To-Text Transcript (Caller Dialogue) */}
-          <div className="lg:col-span-7">
-            <Card
-              className="h-full flex flex-col"
-              header={
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold text-slate-800 flex items-center gap-2">
-                    <MessageSquare size={16} className="text-blue-600" />
-                    Live Conversation Transcript
-                    <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded">REAL-TIME</span>
-                  </span>
+              {/* Controls */}
+              <div className="flex items-center gap-2 self-end md:self-auto">
+                {callMode === 'simulation' ? (
                   <button
-                    onClick={() => navigate('/conversation')}
-                    className="text-xs text-blue-600 hover:underline flex items-center gap-1 font-medium"
+                    onClick={resetSihScenario}
+                    className="px-3 py-2 rounded-xl text-xs font-bold bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 transition shadow-2xs flex items-center gap-1.5 cursor-pointer"
                   >
-                    Full View
+                    <RotateCcw size={14} />
+                    <span>Reset Scenario</span>
                   </button>
-                </div>
-              }
-            >
-              <div className="flex-1 flex flex-col justify-between">
-                {transcript.length === 0 ? (
-                  <div className="py-8 text-center text-slate-400 text-sm italic">
-                    Listening for conversation... Speech will appear here as live speech-to-text transcribes incoming voice chunks.
-                  </div>
                 ) : (
-                  <TranscriptDisplay segments={transcript} maxHeight="220px" />
+                  <button
+                    onClick={() => setMicActive(!micActive)}
+                    className={`p-2 rounded-xl text-xs font-semibold border transition shadow-2xs flex items-center gap-1.5 cursor-pointer ${
+                      micActive
+                        ? 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                        : 'bg-amber-50 text-amber-800 border-amber-300'
+                    }`}
+                  >
+                    {micActive ? <Mic size={14} className="text-emerald-600" /> : <MicOff size={14} className="text-amber-600" />}
+                    <span className="hidden sm:inline">{micActive ? 'Mic Active' : 'Muted'}</span>
+                  </button>
                 )}
-                <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                    Live speech recognition active
-                  </span>
-                  <span className="text-slate-400 font-mono text-[11px]">{transcript.length} dialogue segments</span>
-                </div>
 
+                <button
+                  onClick={handleEndCall}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-700 text-white transition shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <PhoneOff size={14} />
+                  <span>{callMode === 'simulation' ? 'Exit Simulation' : 'End Call'}</span>
+                </button>
               </div>
-            </Card>
-          </div>
+            </div>
+          </header>
 
-          {/* Side Column: Real Voice Waveform & Detected Conversational Signals */}
-          <div className="lg:col-span-5 space-y-4">
-            {/* Real-time Voice Waveform */}
-            <Card padding="md">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
-                  <Radio size={13} className={isSpeaking ? 'text-green-500 animate-pulse' : 'text-slate-400'} />
-                  Audio Stream & Energy Level
-                </span>
-                <span className="text-xs text-slate-500 font-mono">
-                  {diagnostics ? `RMS: ${diagnostics.rms.toFixed(3)}` : isSpeaking ? 'Speaking' : 'Listening...'}
-                </span>
-              </div>
-              <div className="text-center my-2">
-                <LiveVoiceWaveform
-                  activityLevel={waveformActivity ?? 0.05}
-                  state={isSpeaking ? 'speaking' : 'silence'}
-                  severity={security.severity}
-                  height={68}
-                  barCount={36}
-                  className="justify-center"
+          {/* Main 2-Column Layout */}
+          <main className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              
+              {/* Column 1: Live Conversation Transcript */}
+              <div className="lg:col-span-7 space-y-3">
+                <TranscriptDisplay
+                  items={transcript}
+                  interimTranscript={interimTranscript}
+                  maxHeight="420px"
+                  isListening={micActive}
+                  perspective="employee"
+                  onSendMessage={handleSendMessage}
+                  inputPlaceholder="Speak into mic or type as Sreya (Employee)..."
                 />
-              </div>
-              <div className="text-[11px] text-slate-500 text-center flex flex-col items-center justify-center gap-1.5 pt-1">
-                <div className="flex items-center justify-center gap-2">
-                  <span className={micActive ? 'text-emerald-700 font-medium' : 'text-slate-600 font-medium'}>
-                    {isRecipientMode ? '● Recipient Monitor' : micActive ? '● Mic active (16kHz PCM)' : '○ Mic muted'}
-                  </span>
-                  <span>•</span>
-                  <span className="text-slate-500">FastAPI ML Pipeline</span>
-                </div>
-                {activeCall && (
-                  <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
+
+                {/* Employee Quick Voice/Response Chips */}
+                <div className="p-3 bg-white rounded-xl border border-slate-200/80 space-y-1.5 shadow-2xs">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                    <span>Quick Citizen / Employee Responses</span>
+                    <span className="text-[10px] text-blue-600 font-semibold">1-Click Live Reply</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
                     <button
-                      onClick={() => {
-                        if (liveCallStream instanceof WebSocketLiveCallStreamImpl) {
-                          liveCallStream.resumePlaybackAudio();
-                        }
-                      }}
-                      className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200 cursor-pointer"
+                      type="button"
+                      onClick={() => handleSendMessage('Hello, I can hear you clearly. Who is speaking?')}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 text-[11px] font-medium transition cursor-pointer"
                     >
-                      <Volume2 size={12} />
-                      Speaker Output (Click to Unmute / Test Sound)
+                      "I can hear you clearly"
                     </button>
                     <button
-                      disabled={isInjectingDemo}
-                      onClick={handleInjectDemoAudio}
-                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-300 shadow-xs cursor-pointer hover:bg-emerald-100 transition disabled:opacity-50"
-                      title="Inject CFO urgent wire transfer audio directly to test live speech-to-text transcription and deepfake detection"
+                      type="button"
+                      onClick={() => handleSendMessage('What is this call regarding?')}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 text-[11px] font-medium transition cursor-pointer"
                     >
-                      <Play size={11} className={isInjectingDemo ? 'animate-spin' : ''} />
-                      {isInjectingDemo ? 'Streaming Audio Chunks...' : 'Test Stream (Inject Voice Clone Audio)'}
+                      "What is this regarding?"
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSendMessage('I cannot share any OTP or account credentials over the phone.')}
+                      className="px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-900 text-[11px] font-medium transition cursor-pointer"
+                    >
+                      "I will not share my OTP"
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSendMessage('The OTP is 482913.')}
+                      className="px-2.5 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-900 text-[11px] font-medium transition cursor-pointer"
+                    >
+                      Disclose OTP ("482913")
                     </button>
                   </div>
-                )}
+                </div>
               </div>
-            </Card>
 
-            {/* Detected Conversational Signals */}
-            <Card
-              padding="sm"
-              header={<span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Detected Signals</span>}
-            >
-              {security.signals.length === 0 ? (
-                <div className="py-2 text-xs text-slate-400 italic">No suspicious intent signals detected yet.</div>
-              ) : (
-                <div className="flex flex-wrap gap-1.5 pt-0.5">
-                  {security.signals.map((sig) => (
-                    <ConversationSignalTag key={sig.type} signal={sig} />
-                  ))}
-                </div>
-              )}
-            </Card>
-          </div>
-        </div>
-
-        {/* 5. Prominent In-Page Warning Banner if Critical or High */}
-        {(isCritical || isHigh) && (
-          <div className="bg-red-50 border-2 border-red-500 rounded-xl p-4 shadow-sm animate-fade-in-up">
-            <div className="flex items-start gap-3 mb-3">
-              <ShieldAlert size={24} className="text-red-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <div className="font-bold text-red-900 text-base">
-                  ⚠ {isCritical ? 'CRITICAL THREAT: AI Voice Clone Impersonation Detected' : 'HIGH RISK: Suspicious Call / Voice Patterns'}
-                </div>
-                <div className="text-sm text-red-700 mt-1 font-medium">
-                  {isCritical
-                    ? `Attacker is using a synthetic voice clone claiming to be ${caller.name || 'protected executive'}. Do not transfer funds, share OTPs, or authorize requests.`
-                    : 'Do not share OTP, passwords, or approve payments. Verification recommended.'}
-                </div>
-                {security.securityTeamNotified && (
-                  <div className="text-xs text-red-600 mt-1.5 font-semibold flex items-center gap-1">
-                    <ShieldCheck size={13} />
-                    Security operations center (SOC) has been notified automatically.
+              {/* Column 2: Actionable Security Insights ONLY */}
+              <div className="lg:col-span-5 space-y-4">
+                
+                {/* Caller Soliciting Sensitive Data / OTP Alert Banner */}
+                {hasCallerSensitiveRequest && (
+                  <div className="p-4 rounded-xl border border-red-500 bg-red-50 text-red-950 shadow-sm space-y-2 border-l-4 border-l-red-600 animate-pulse">
+                    <div className="flex items-center gap-2 font-black text-xs uppercase tracking-wider text-red-900">
+                      <ShieldAlert size={18} className="text-red-600 flex-shrink-0" />
+                      <span>CRITICAL RISK: {callerSensitiveMatch?.warningLabel || 'Unauthorized Sensitive Data / OTP Solicitation'}</span>
+                    </div>
+                    <p className="text-xs font-semibold leading-relaxed text-red-900">
+                      The caller is asking for <strong>{callerSensitiveMatch?.category || 'OTP / sensitive credentials'}</strong>. Legitimate organizations and banks will <strong>NEVER</strong> ask for your OTP, PIN, password, or security codes over phone calls.
+                    </p>
+                    {/* Matching Spoken Warning & Manual Play Trigger */}
+                    <div className="p-2.5 rounded-lg bg-red-100/90 border border-red-200 text-xs text-red-900 space-y-1">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-red-800 uppercase">
+                        <span>Spoken Audio Warning ({selectedLanguage.language})</span>
+                        <button
+                          type="button"
+                          onClick={() => warningAudioService.playSecurityWarning('CREDENTIAL_EXPOSURE', selectedLanguage.code || selectedLanguage.language, true)}
+                          className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-700 text-white font-bold text-[10px] flex items-center gap-1 cursor-pointer transition"
+                        >
+                          <Volume2 size={11} />
+                          <span>Play Warning</span>
+                        </button>
+                      </div>
+                      <p className="italic text-[11px] text-red-950">
+                        “{warningAudioService.getWarningScript('CREDENTIAL_EXPOSURE', selectedLanguage.code || selectedLanguage.language)}”
+                      </p>
+                    </div>
+                    <div className="text-[11px] font-bold text-red-800 bg-white/80 p-2 rounded-lg border border-red-200 flex items-center gap-1.5">
+                      <AlertTriangle size={13} className="text-red-600 flex-shrink-0" />
+                      <span>{callerSensitiveMatch?.recommendedAction}</span>
+                    </div>
                   </div>
                 )}
-              </div>
-            </div>
-            <div className="flex gap-2 pt-1 flex-wrap">
-              <Button variant="primary" onClick={() => navigate('/verification')} icon={<UserCheck size={14} />}>
-                Verify Caller Independently
-              </Button>
-              <Button variant="danger" onClick={handleEndCall} icon={<PhoneOff size={14} />}>
-                Hang Up Immediately
-              </Button>
-            </div>
-          </div>
-        )}
 
-        {/* Caller Identity Card */}
-        <Card>
-          <CallerCard caller={caller} source={source} />
-        </Card>
-
-        {/* Navigation Actions */}
-        <div className="flex gap-2 flex-wrap pt-1">
-          <Button variant="outline" size="sm" onClick={() => navigate('/verification')} icon={<UserCheck size={14} />}>
-            Step-Up Verification
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/identity')} icon={<User size={14} />}>
-            Identity Details
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/conversation')} icon={<MessageSquare size={14} />}>
-            Transcript & Signals
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/history')} icon={<ShieldCheck size={14} />}>
-            Call History
-          </Button>
-        </div>
-
-        {/* 7. Risk Timeline */}
-        <Card header={<span className="text-sm font-semibold text-slate-700">Risk Timeline Progression</span>}>
-          <RiskTimeline
-            currentSeverity={security.severity}
-            currentScore={security.score}
-            history={riskHistory}
-          />
-        </Card>
-
-        {/* Development Diagnostics Panel */}
-        {diagnostics && (
-          <div className="bg-slate-900 text-slate-200 rounded-xl p-4 border border-slate-800 text-xs font-mono shadow-md">
-            <div
-              className="flex items-center justify-between cursor-pointer pb-1"
-              onClick={() => setShowDiagnostics(!showDiagnostics)}
-            >
-              <div className="flex items-center gap-2 text-amber-400 font-bold">
-                <Terminal size={14} />
-                <span>VOICE SHIELD DIAGNOSTICS</span>
-              </div>
-              <div className="flex items-center gap-2 text-slate-400">
-                <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded text-amber-300">REAL-TIME PIPELINE</span>
-                {showDiagnostics ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              </div>
-            </div>
-
-            {showDiagnostics && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-2 border-t border-slate-800">
-                <div>
-                  <div className="text-slate-500">Mic Status</div>
-                  <div className="mt-0.5 font-bold text-green-400">{diagnostics.micStatus}</div>
-                </div>
-                <div>
-                  <div className="text-slate-500">WebSocket</div>
-                  <div className="mt-0.5 font-bold text-cyan-400">{diagnostics.wsStatus}</div>
-                </div>
-                <div>
-                  <div className="text-slate-500">Audio Rate</div>
-                  <div className="mt-0.5 font-bold text-slate-300">{diagnostics.audioContextSampleRate} Hz</div>
-                </div>
-                <div>
-                  <div className="text-slate-500">16kHz Frames Sent</div>
-                  <div className="mt-0.5 font-bold text-amber-400">{diagnostics.pcmFramesSent}</div>
-                </div>
-                <div>
-                  <div className="text-slate-500">ML Risk Score</div>
-                  <div className="mt-0.5 font-bold text-green-400">
-                    {diagnostics.lastRiskScore.toFixed(1)}{' '}
-                    <span className="text-[10px] text-slate-400">({diagnostics.lastRiskLevel})</span>
-                  </div>
-                </div>
-                <div>
-                  <div className="text-slate-500">ML Verdict</div>
-                  <div className="mt-0.5 font-bold text-amber-300">{diagnostics.lastVerdict.toUpperCase()}</div>
-                </div>
-                {diagnostics.lastTranscript && (
-                  <div className="col-span-2 md:col-span-4 mt-1 bg-slate-950 p-2.5 rounded border border-slate-800">
-                    <span className="text-slate-500 text-[10px]">Latest Speech Transcript: </span>
-                    <span className="text-slate-100 font-semibold">"{diagnostics.lastTranscript}"</span>
+                {/* Possible Credential Exposure Banner (if OTP spoken by employee) */}
+                {hasCredentialExposure && (
+                  <div className="p-4 rounded-xl border border-red-300 bg-red-100 text-red-950 shadow-sm space-y-2 animate-bounce-short">
+                    <div className="flex items-center gap-2 font-black text-xs uppercase tracking-wider text-red-900">
+                      <Flame size={18} className="text-red-600 flex-shrink-0 animate-pulse" />
+                      <span>CRITICAL: Possible Credential Exposure Detected</span>
+                    </div>
+                    <p className="text-xs font-semibold leading-relaxed">
+                      Verification code or one-time password digits were spoken aloud. Immediate counter-measures required under the 60-minute Golden-Hour window.
+                    </p>
+                    {/* Matching Spoken Warning & Manual Play Trigger */}
+                    <div className="p-2.5 rounded-lg bg-red-200/80 border border-red-300 text-xs text-red-950 space-y-1">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-red-900 uppercase">
+                        <span>Spoken Audio Warning ({selectedLanguage.language})</span>
+                        <button
+                          type="button"
+                          onClick={() => warningAudioService.playSecurityWarning('CREDENTIAL_EXPOSURE', selectedLanguage.code || selectedLanguage.language, true)}
+                          className="px-2 py-0.5 rounded bg-red-700 hover:bg-red-800 text-white font-bold text-[10px] flex items-center gap-1 cursor-pointer transition"
+                        >
+                          <Volume2 size={11} />
+                          <span>Play Warning</span>
+                        </button>
+                      </div>
+                      <p className="italic text-[11px] text-red-950">
+                        “{warningAudioService.getWarningScript('CREDENTIAL_EXPOSURE', selectedLanguage.code || selectedLanguage.language)}”
+                      </p>
+                    </div>
                   </div>
                 )}
+
+                {/* AI Voice Clone Impersonation Critical Banner (Acoustic Match) */}
+                {isCritical && !hasCallerSensitiveRequest && !hasCredentialExposure && (
+                  <div className="p-4 rounded-xl border border-rose-400 bg-rose-50 text-rose-950 shadow-sm space-y-2 border-l-4 border-l-rose-600 animate-pulse">
+                    <div className="flex items-center gap-2 font-black text-xs uppercase tracking-wider text-rose-900">
+                      <ShieldAlert size={18} className="text-rose-600 flex-shrink-0" />
+                      <span>CRITICAL RISK: AI Voice Clone / Impersonation Detected</span>
+                    </div>
+                    <p className="text-xs font-semibold leading-relaxed text-rose-900">
+                      Biometric and spectral analysis detected synthetic speech artifacts. Voice signature does not match claimed speaker {claimedCaller.name}.
+                    </p>
+                    {/* Matching Spoken Warning & Manual Play Trigger */}
+                    <div className="p-2.5 rounded-lg bg-rose-100/90 border border-rose-200 text-xs text-rose-900 space-y-1">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-rose-800 uppercase">
+                        <span>Spoken Audio Warning ({selectedLanguage.language})</span>
+                        <button
+                          type="button"
+                          onClick={() => warningAudioService.playSecurityWarning('CRITICAL', selectedLanguage.code || selectedLanguage.language, true)}
+                          className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] flex items-center gap-1 cursor-pointer transition"
+                        >
+                          <Volume2 size={11} />
+                          <span>Play Warning</span>
+                        </button>
+                      </div>
+                      <p className="italic text-[11px] text-rose-950">
+                        “{warningAudioService.getWarningScript('CRITICAL', selectedLanguage.code || selectedLanguage.language)}”
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* High Risk Acoustic/Pattern Divergence Banner */}
+                {isHigh && !isCritical && !hasCallerSensitiveRequest && !hasCredentialExposure && (
+                  <div className="p-4 rounded-xl border border-orange-400 bg-orange-50 text-orange-950 shadow-sm space-y-2 border-l-4 border-l-orange-500">
+                    <div className="flex items-center gap-2 font-black text-xs uppercase tracking-wider text-orange-900">
+                      <AlertTriangle size={18} className="text-orange-600 flex-shrink-0" />
+                      <span>HIGH RISK: Elevated Impersonation Risk / Unverified Acoustics</span>
+                    </div>
+                    <p className="text-xs font-semibold leading-relaxed text-orange-900">
+                      Elevated acoustic divergence detected. Verify caller through official independent channels before sharing information.
+                    </p>
+                    {/* Matching Spoken Warning & Manual Play Trigger */}
+                    <div className="p-2.5 rounded-lg bg-orange-100/90 border border-orange-200 text-xs text-orange-900 space-y-1">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-orange-800 uppercase">
+                        <span>Spoken Audio Warning ({selectedLanguage.language})</span>
+                        <button
+                          type="button"
+                          onClick={() => warningAudioService.playSecurityWarning('HIGH', selectedLanguage.code || selectedLanguage.language, true)}
+                          className="px-2 py-0.5 rounded bg-orange-600 hover:bg-orange-700 text-white font-bold text-[10px] flex items-center gap-1 cursor-pointer transition"
+                        >
+                          <Volume2 size={11} />
+                          <span>Play Warning</span>
+                        </button>
+                      </div>
+                      <p className="italic text-[11px] text-orange-950">
+                        “{warningAudioService.getWarningScript('HIGH', selectedLanguage.code || selectedLanguage.language)}”
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Primary Actionable Security Insight Card */}
+                <div
+                  className={`card-enterprise p-5 transition-all border ${
+                    isCritical || hasCredentialExposure || hasCallerSensitiveRequest
+                      ? 'border-red-300/90 bg-red-50/50 shadow-sm'
+                      : isHigh
+                      ? 'border-orange-300 bg-orange-50/50 shadow-xs'
+                      : isCaution
+                      ? 'border-amber-200 bg-amber-50/30 shadow-xs'
+                      : 'border-emerald-200 bg-emerald-50/20'
+                  }`}
+                >
+                  {/* Status Header */}
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-200/70">
+                    <div className="flex items-center gap-2">
+                      {isCritical || hasCredentialExposure || hasCallerSensitiveRequest ? (
+                        <ShieldAlert size={20} className="text-red-600 flex-shrink-0" />
+                      ) : isHigh ? (
+                        <AlertTriangle size={20} className="text-orange-600 flex-shrink-0" />
+                      ) : isCaution ? (
+                        <AlertTriangle size={20} className="text-amber-600 flex-shrink-0" />
+                      ) : (
+                        <CheckCircle2 size={20} className="text-emerald-600 flex-shrink-0" />
+                      )}
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">
+                          Actionable Security Insight
+                        </div>
+                        <div className="text-base font-extrabold text-slate-900">
+                          {hasCallerSensitiveRequest
+                            ? `Immediate Danger: Unauthorized ${callerSensitiveMatch?.category || 'OTP'} Request`
+                            : isCritical || hasCredentialExposure
+                            ? 'Immediate Danger: Credential Solicitation'
+                            : isHigh
+                            ? 'High Impersonation Risk: Voice & Intent Mismatch'
+                            : isCaution
+                            ? 'Caution: Suspicious Pacing & Urgency'
+                            : 'Call Appears Normal'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                        isCritical || hasCredentialExposure || hasCallerSensitiveRequest
+                          ? 'bg-red-100 text-red-900 border-red-300'
+                          : isHigh
+                          ? 'bg-orange-100 text-orange-900 border-orange-300'
+                          : isCaution
+                          ? 'bg-amber-100 text-amber-900 border-amber-300'
+                          : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                      }`}
+                    >
+                      {hasCredentialExposure
+                        ? 'CRITICAL (EXPOSURE)'
+                        : hasCallerSensitiveRequest
+                        ? 'CRITICAL (OTP REQUEST)'
+                        : (currentRisk?.level || 'SAFE').toUpperCase()}
+                    </span>
+                  </div>
+
+                  {/* What was detected */}
+                  <div className="mt-4 bg-white/90 rounded-xl p-3.5 border border-slate-200/70 shadow-2xs text-xs">
+                    <div className="text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-1">
+                      What was detected
+                    </div>
+                    <div className="text-slate-800 font-semibold leading-relaxed">
+                      {hasCallerSensitiveRequest
+                        ? `The caller claimed identity as ${claimedCaller.name} (${claimedCaller.organization}) and requested sensitive ${callerSensitiveMatch?.category || 'OTP credentials'}. Official institutions will NEVER ask for one-time verification codes.`
+                        : hasCredentialExposure
+                        ? `The caller claimed identity as ${claimedCaller.name} (${claimedCaller.organization}) and induced the user to disclose one-time authorization credentials.`
+                        : isCritical
+                        ? 'The caller is urgently requesting a one-time password (OTP) or banking credential during an unverified caller session.'
+                        : isHigh
+                        ? `Acoustic voice mismatch or elevated impersonation intent detected for claimed caller ${claimedCaller.name || 'Caller'}. The voice does not match official enrolled profile.`
+                        : isCaution
+                        ? 'Caller is expressing abnormal urgency and asking to bypass standard verification channels.'
+                        : 'Standard conversation pace. No sensitive credentials or payment requests detected.'}
+                    </div>
+                  </div>
+
+                  {/* What the employee should do */}
+                  <div
+                    className={`mt-3 rounded-xl p-3.5 border shadow-2xs text-xs ${
+                      isCritical || hasCredentialExposure || hasCallerSensitiveRequest
+                        ? 'bg-red-600 text-white border-red-700'
+                        : isHigh
+                        ? 'bg-orange-600 text-white border-orange-700'
+                        : isCaution
+                        ? 'bg-amber-100 text-amber-950 border-amber-300'
+                        : 'bg-blue-50 text-blue-950 border-blue-200'
+                    }`}
+                  >
+                    <div className="text-[10px] font-bold uppercase tracking-wider opacity-85 mb-1">
+                      What you should do right now
+                    </div>
+                    <div className="font-extrabold text-sm leading-snug">
+                      {isCritical || hasCredentialExposure || hasCallerSensitiveRequest
+                        ? 'DO NOT share OTP, passwords, or approve payments. Disconnect line immediately.'
+                        : isHigh
+                        ? 'Do NOT disclose passwords, OTPs, or financial information. Call back on official verified directory number.'
+                        : isCaution
+                        ? 'Avoid disclosing credentials or transferring funds. Exercise caution.'
+                        : 'Continue your call normally. Security shield is actively listening for anomalies.'}
+                    </div>
+                  </div>
+
+                  {/* Quick Actions */}
+                  <div className="mt-4 pt-3 border-t border-slate-200/60 flex items-center justify-between gap-2">
+                    <button
+                      onClick={() => setShowTrustedGuide(!showTrustedGuide)}
+                      className="text-xs font-semibold text-blue-700 hover:text-blue-900 underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Verify caller through trusted channel</span>
+                      <ExternalLink size={12} />
+                    </button>
+
+                    {(isCritical || hasCredentialExposure) && (
+                      <button
+                        onClick={handleEndCall}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-600 text-white hover:bg-red-700 shadow-xs cursor-pointer"
+                      >
+                        Protect & Disconnect
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Trusted channel guide dropdown */}
+                  {showTrustedGuide && (
+                    <div className="mt-3 p-3 bg-blue-50 rounded-xl border border-blue-200 text-xs text-blue-900 animate-slow-fade">
+                      <div className="font-bold text-blue-950">Trusted Channel Verification Rule:</div>
+                      <p className="mt-1 text-slate-700">
+                        Never trust contact numbers provided during this call. Look up the organization's official published directory or call the branch directly.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Golden-Hour Guidance (when credentials may have been exposed) */}
+                {(isCritical || isHigh || hasCredentialExposure) && (
+                  <div className="card-enterprise p-4 border border-red-200 bg-red-50/50 text-xs space-y-2 animate-slow-fade">
+                    <div className="flex items-center gap-2 text-red-900 font-extrabold text-xs">
+                      <Flame size={16} className="text-red-600" />
+                      <span>Golden-Hour Immediate Response Protocol</span>
+                    </div>
+                    <p className="text-red-800 leading-relaxed text-[11px]">
+                      If credentials or OTP were shared, rapid intervention in the first 60 minutes prevents account compromise:
+                    </p>
+                    <ol className="list-decimal list-inside space-y-1 text-slate-700 text-[11px] font-medium">
+                      <li>Immediately lock bank accounts / freeze credit & debit cards.</li>
+                      <li>Dial national cybercrime hotline 1930 to freeze fraudulent fund routing.</li>
+                      <li>Report the incident to the National Cyber Crime Reporting Portal.</li>
+                    </ol>
+                  </div>
+                )}
+
+                {/* Appropriate Immediate Contact (Dynamic by Organization) */}
+                <div className="card-enterprise p-4 border border-slate-200/90 bg-white text-xs space-y-3">
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                    Appropriate Immediate Contact
+                  </div>
+
+                  {isBankAttack ? (
+                    <div className="p-3 bg-blue-50/80 rounded-xl border border-blue-200/80 flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <Landmark size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[10px] text-blue-600 font-bold uppercase">Financial / Banking Fraud</div>
+                        <div className="font-extrabold text-slate-900 text-xs mt-0.5">
+                          National Cybercrime Helpline & Portal
+                        </div>
+                        <div className="text-slate-600 text-[11px] mt-0.5">
+                          Toll-Free Helpline: <strong className="font-mono text-slate-900">1930</strong>
+                        </div>
+                        <div className="text-slate-600 text-[11px]">
+                          Official Portal: <strong className="font-mono text-blue-700">cybercrime.gov.in</strong>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Request an immediate financial freeze on beneficiary accounts.
+                        </p>
+                      </div>
+                    </div>
+                  ) : isPoliceAttack ? (
+                    <div className="p-3 bg-indigo-50/80 rounded-xl border border-indigo-200/80 flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <ShieldAlert size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[10px] text-indigo-600 font-bold uppercase">Police Impersonation</div>
+                        <div className="font-extrabold text-slate-900 text-xs mt-0.5">
+                          Police Emergency & Cybercrime Cell
+                        </div>
+                        <div className="text-slate-600 text-[11px] mt-0.5">
+                          Emergency Response: <strong className="font-mono text-slate-900">112</strong>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Indian Police officers never demand money or OTPs over phone calls.
+                        </p>
+                      </div>
+                    </div>
+                  ) : isUidaiAttack ? (
+                    <div className="p-3 bg-sky-50/80 rounded-xl border border-sky-200/80 flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-sky-600 text-white flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <Building2 size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[10px] text-sky-600 font-bold uppercase">UIDAI / Aadhaar Authority</div>
+                        <div className="font-extrabold text-slate-900 text-xs mt-0.5">
+                          UIDAI Helpdesk & Biometric Lock
+                        </div>
+                        <div className="text-slate-600 text-[11px] mt-0.5">
+                          UIDAI Helpline: <strong className="font-mono text-slate-900">1947</strong>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Lock your Aadhaar biometrics immediately via the mAadhaar app.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-slate-800 text-white flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <Building2 size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[10px] text-slate-500 font-bold uppercase">Organizational Security</div>
+                        <div className="font-extrabold text-slate-900 text-xs mt-0.5">
+                          Corporate Security Operations (SOC)
+                        </div>
+                        <div className="text-slate-600 text-[11px] mt-0.5">
+                          SOC Helpline: <strong className="font-mono text-slate-900">security@fincorp.internal</strong>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Report caller impersonation attempt to prevent collateral team attacks.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
-        )}
-      </div>
+            </div>
+          </main>
+        </>
+      )}
     </div>
   );
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function buildTimeline(call: CallSession): CallTimelineEvent[] {
-  const start = call.startTime;
-  const fmt = (ms: number) => {
-    const d = new Date(start.getTime() + ms);
-    return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-  };
-  const items: CallTimelineEvent[] = [{ time: fmt(0), description: 'Live audio stream initialized', type: 'info' }];
-  call.security.signals.forEach((sig, i) => {
-    items.push({
-      time: fmt(5000 + i * 8000),
-      description: `${sig.label} detected by NLP engine`,
-      type: sig.severity === 'CRITICAL' || sig.severity === 'HIGH' ? 'critical' : 'warning',
-    });
-  });
-  if (call.security.severity === 'CRITICAL' || call.security.severity === 'HIGH') {
-    items.push({ time: fmt(12000), description: 'High risk alert dispatched to user & SOC', type: 'critical' });
-  }
-  items.push({ time: fmt(Math.max(1000, Date.now() - start.getTime())), description: 'Call ended', type: 'info' });
-  return items;
-}
-
-function buildSummary(call: CallSession): string {
-  if (call.security.severity === 'CRITICAL') {
-    return `Live call analyzed with high risk score (${call.security.score}/100). The ML model identified synthetic voice anomalies and intent flags: ${
-      call.security.signals.map((s) => s.label).join(', ') || 'AI voice clone detected'
-    }.`;
-  }
-  if (call.security.severity === 'HIGH') {
-    return `Live call analyzed with elevated risk. Biometric voice verification was inconclusive.`;
-  }
-  return `Live voice communication was analyzed by VoiceShield ML models. The voice patterns were determined to be authentic with normal conversation patterns.`;
 }

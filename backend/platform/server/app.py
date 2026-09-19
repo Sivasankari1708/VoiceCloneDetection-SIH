@@ -8,14 +8,16 @@ Initializes database schema, seed data, CORS, and mounts all REST & WebSocket ro
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
+import numpy as np
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from backend.platform.config import platform_config
-from backend.platform.db.models import Organization, ProtectedIdentity, SecurityPolicy, User
+from backend.platform.db.models import Organization, ProtectedIdentity, SecurityPolicy, SpeakerProfileModel, User
 from backend.platform.db.session import SessionLocal, init_db
 from backend.platform.server.routes.analyze import router as analyze_router
 from backend.platform.server.routes.audit import router as audit_router
@@ -26,6 +28,7 @@ from backend.platform.server.routes.incidents import router as incidents_router
 from backend.platform.server.routes.organizations import router as org_router
 from backend.platform.server.routes.policies import router as policies_router
 from backend.platform.server.routes.protected_identities import router as protected_identities_router
+from backend.platform.server.routes.tts import router as tts_router
 from backend.platform.server.routes.websocket_stream import router as websocket_router
 from backend.platform.services.ai_adapter import AIAdapter
 from backend.platform.services.auth_service import hash_password
@@ -33,90 +36,260 @@ from backend.platform.services.auth_service import hash_password
 log = logging.getLogger("voice_clone_platform")
 
 
+def _generate_synthetic_embedding(speaker_id: str, dim: int = 192) -> List[float]:
+    """Generate deterministic L2-normalized 192-D speaker embedding."""
+    seed = sum(ord(c) for c in speaker_id) * 31
+    rng = np.random.RandomState(seed)
+    vec = rng.randn(dim).astype(np.float32)
+    norm = float(np.linalg.norm(vec))
+    if norm > 0:
+        vec = vec / norm
+    return vec.tolist()
+
+
 def seed_demo_data(db: Session) -> None:
-    """Seed initial demo organizations, users, and protected identities with Indian personas."""
-    # 1. Org A: Apex Financial Corp (Claimed / Impersonated Organization)
-    org = db.query(Organization).filter_by(id="org_demo_001").first()
-    if not org:
-        org = Organization(
-            id="org_demo_001",
-            name="Apex Financial Corp",
-            code="APEX_FIN",
-        )
-        db.add(org)
-        db.flush()
-    else:
-        org.name = "Apex Financial Corp"
-        org.code = "APEX_FIN"
+    """Seed 5 registered demo organizations, users, and protected identities."""
+    # 5 Demo Organizations
+    org_definitions = [
+        {
+            "id": "org_sbi",
+            "name": "State Bank of India",
+            "code": "SBI",
+            "operator_user": "operator_sbi",
+            "operator_email": "operator@sbi.co.in",
+            "identities": [
+                {
+                    "id": "vip_sbi_001",
+                    "name": "Vikram Singh",
+                    "title": "Senior Bank Officer",
+                    "department": "Retail & SME Banking",
+                    "speaker_id": "SPK_SBI_01",
+                    "phone": "+91-98111-22331",
+                },
+                {
+                    "id": "vip_sbi_002",
+                    "name": "Ananya Sharma",
+                    "title": "Branch Manager",
+                    "department": "Branch Operations",
+                    "speaker_id": "SPK_SBI_02",
+                    "phone": "+91-98111-22332",
+                },
+            ],
+        },
+        {
+            "id": "org_iob",
+            "name": "Indian Overseas Bank",
+            "code": "IOB",
+            "operator_user": "operator_iob",
+            "operator_email": "operator@iob.in",
+            "identities": [
+                {
+                    "id": "vip_iob_001",
+                    "name": "Rajesh Kumar",
+                    "title": "Bank Manager",
+                    "department": "Branch Operations",
+                    "speaker_id": "SPK_IOB_01",
+                    "phone": "+91-98222-33441",
+                },
+                {
+                    "id": "vip_iob_002",
+                    "name": "Priya Nair",
+                    "title": "Senior Officer",
+                    "department": "Vigilance & Operations",
+                    "speaker_id": "SPK_IOB_02",
+                    "phone": "+91-98222-33442",
+                },
+            ],
+        },
+        {
+            "id": "org_uidai",
+            "name": "UIDAI",
+            "code": "UIDAI",
+            "operator_user": "operator_uidai",
+            "operator_email": "operator@uidai.gov.in",
+            "identities": [
+                {
+                    "id": "vip_uidai_001",
+                    "name": "Arjun Mehta",
+                    "title": "Senior Administrative Officer",
+                    "department": "Identity Verification Directorate",
+                    "speaker_id": "SPK_UIDAI_01",
+                    "phone": "+91-98333-44551",
+                },
+                {
+                    "id": "vip_uidai_002",
+                    "name": "Neha Rao",
+                    "title": "IT/Operations Officer",
+                    "department": "Information Security & Operations",
+                    "speaker_id": "SPK_UIDAI_02",
+                    "phone": "+91-98333-44552",
+                },
+            ],
+        },
+        {
+            "id": "org_police",
+            "name": "Police Department",
+            "code": "POLICE",
+            "operator_user": "operator_police",
+            "operator_email": "operator@police.gov.in",
+            "identities": [
+                {
+                    "id": "vip_pol_001",
+                    "name": "Vikram Reddy",
+                    "title": "Senior Police Officer",
+                    "department": "Crime Branch",
+                    "speaker_id": "SPK_POL_01",
+                    "phone": "+91-98444-55661",
+                },
+                {
+                    "id": "vip_pol_002",
+                    "name": "Kavya Menon",
+                    "title": "Cyber Crime Officer",
+                    "department": "Cyber Crime Division",
+                    "speaker_id": "SPK_POL_02",
+                    "phone": "+91-98444-55662",
+                },
+            ],
+        },
+        {
+            "id": "org_drdo",
+            "name": "DRDO",
+            "code": "DRDO",
+            "operator_user": "operator_drdo",
+            "operator_email": "operator@drdo.gov.in",
+            "identities": [
+                {
+                    "id": "vip_drdo_001",
+                    "name": "Rohan Verma",
+                    "title": "Research/IT Officer",
+                    "department": "Information Systems & Defense",
+                    "speaker_id": "SPK_DRDO_01",
+                    "phone": "+91-98555-66771",
+                },
+                {
+                    "id": "vip_drdo_002",
+                    "name": "Meera Iyer",
+                    "title": "Senior Research Officer",
+                    "department": "Advanced Research Division",
+                    "speaker_id": "SPK_DRDO_02",
+                    "phone": "+91-98555-66772",
+                },
+            ],
+        },
+    ]
 
-    # Security Policy for Apex Financial Corp
-    policy = db.query(SecurityPolicy).filter_by(org_id=org.id).first()
-    if not policy:
-        policy = SecurityPolicy(
-            org_id=org.id,
-            policy_config_json='{"risk_score_high_threshold": 65.0, "risk_score_critical_threshold": 85.0, "auto_warn_user_on_high": true, "auto_alert_org_on_high": true, "auto_block_on_critical_clone": false, "enforce_protected_vip_rules": true, "sensitive_intent_escalation": true}',
-        )
-        db.add(policy)
+    for org_def in org_definitions:
+        # Organization
+        org = db.query(Organization).filter((Organization.id == org_def["id"]) | (Organization.code == org_def["code"])).first()
+        if not org:
+            org = Organization(
+                id=org_def["id"],
+                name=org_def["name"],
+                code=org_def["code"],
+            )
+            db.add(org)
+            db.flush()
+        else:
+            org.name = org_def["name"]
+            org.code = org_def["code"]
 
-    # Operator for Apex Financial Corp SOC: Priya Nair
-    operator_user = db.query(User).filter_by(username="operator").first()
-    if not operator_user:
-        operator_user = User(
-            id="user_operator_001",
-            org_id=org.id,
+        # Security Policy
+        policy = db.query(SecurityPolicy).filter_by(org_id=org.id).first()
+        if not policy:
+            policy = SecurityPolicy(
+                org_id=org.id,
+                policy_config_json='{"risk_score_high_threshold": 65.0, "risk_score_critical_threshold": 80.0, "auto_warn_user_on_high": true, "auto_alert_org_on_high": true, "auto_block_on_critical_clone": false, "enforce_protected_vip_rules": true, "sensitive_intent_escalation": true}',
+            )
+            db.add(policy)
+
+        # Operator Account
+        op = db.query(User).filter((User.username == org_def["operator_user"]) | (User.email == org_def["operator_email"])).first()
+        if not op:
+            op = User(
+                id=f"user_{org_def['operator_user']}",
+                org_id=org.id,
+                username=org_def["operator_user"],
+                email=org_def["operator_email"],
+                hashed_password=hash_password("operator123"),
+                full_name=f"{org_def['name']} SOC Operator",
+                role="SECURITY_OPERATOR",
+            )
+            db.add(op)
+        else:
+            op.org_id = org.id
+            op.hashed_password = hash_password("operator123")
+            op.role = "SECURITY_OPERATOR"
+
+        # Protected Identities & Speaker Profiles
+        for ident in org_def["identities"]:
+            prot = db.query(ProtectedIdentity).filter_by(speaker_id=ident["speaker_id"]).first()
+            if not prot:
+                prot = ProtectedIdentity(
+                    id=ident["id"],
+                    org_id=org.id,
+                    full_name=ident["name"],
+                    title=ident["title"],
+                    department=ident["department"],
+                    email=f"{ident['name'].lower().replace(' ', '.')}@{org_def['code'].lower()}.gov.in",
+                    phone=ident["phone"],
+                    risk_priority="CRITICAL",
+                    speaker_id=ident["speaker_id"],
+                )
+                db.add(prot)
+                db.flush()
+            else:
+                prot.org_id = org.id
+                prot.full_name = ident["name"]
+                prot.title = ident["title"]
+                prot.department = ident["department"]
+
+            # Biometric Speaker Profile with ECAPA-TDNN 192-D Vector
+            profile_model = db.query(SpeakerProfileModel).filter_by(speaker_id=ident["speaker_id"]).first()
+            emb_vec = _generate_synthetic_embedding(ident["speaker_id"])
+            emb_json = json.dumps(emb_vec)
+            meta_json = json.dumps({
+                "enrollment_source": "studio_reference_mic",
+                "sample_rate": 16000,
+                "model": "SpeechBrain ECAPA-TDNN (192-D)",
+                "consistency_score": 0.95,
+                "snr_db": 31.4,
+            })
+            if not profile_model:
+                profile_model = SpeakerProfileModel(
+                    protected_identity_id=prot.id,
+                    speaker_id=ident["speaker_id"],
+                    embedding_dim=192,
+                    sample_count=5,
+                    embedding_vector_json=emb_json,
+                    metadata_json=meta_json,
+                )
+                db.add(profile_model)
+            else:
+                profile_model.protected_identity_id = prot.id
+                profile_model.embedding_vector_json = emb_json
+                profile_model.metadata_json = meta_json
+
+    # Default 'operator' user points to IOB for standard login convenience
+    default_op = db.query(User).filter_by(username="operator").first()
+    if not default_op:
+        default_op = User(
+            id="user_operator_default",
+            org_id="org_iob",
             username="operator",
-            email="priya.nair@apexfin.com",
+            email="operator@iob.in",
             hashed_password=hash_password("operator123"),
-            full_name="Priya Nair (SOC Operator)",
+            full_name="Rajesh Kumar (IOB SOC)",
             role="SECURITY_OPERATOR",
         )
-        db.add(operator_user)
+        db.add(default_op)
     else:
-        operator_user.org_id = org.id
-        operator_user.full_name = "Priya Nair (SOC Operator)"
-        operator_user.email = "priya.nair@apexfin.com"
+        default_op.org_id = "org_iob"
+        default_op.hashed_password = hash_password("operator123")
 
-    # Admin for Apex Financial Corp
-    admin_user = db.query(User).filter_by(username="admin").first()
-    if not admin_user:
-        admin_user = User(
-            id="user_admin_001",
-            org_id=org.id,
-            username="admin",
-            email="admin@apexfin.com",
-            hashed_password=hash_password("admin123"),
-            full_name="Apex System Admin",
-            role="ADMIN",
-        )
-        db.add(admin_user)
-
-    # Protected Identity: Rajesh Malhotra, CFO of Apex Financial Corp
-    cfo_identity = db.query(ProtectedIdentity).filter_by(speaker_id="LA_0069").first()
-    if not cfo_identity:
-        cfo_identity = ProtectedIdentity(
-            id="vip_cfo_001",
-            org_id=org.id,
-            full_name="Rajesh Malhotra",
-            title="Chief Financial Officer",
-            department="Executive Leadership",
-            email="rajesh.malhotra@apexfin.com",
-            phone="+91-98200-11223",
-            risk_priority="CRITICAL",
-            speaker_id="LA_0069",
-        )
-        db.add(cfo_identity)
-    else:
-        cfo_identity.org_id = org.id
-        cfo_identity.full_name = "Rajesh Malhotra"
-        cfo_identity.title = "Chief Financial Officer"
-        cfo_identity.department = "Executive Leadership"
-        cfo_identity.email = "rajesh.malhotra@apexfin.com"
-        cfo_identity.phone = "+91-98200-11223"
-
-    # 2. Independent Citizen / Target Individual: Sreya Sengupta (org_id = None)
-    sreya_user = db.query(User).filter((User.username == "sreya") | (User.email == "sreya@demo.com")).first()
-    if not sreya_user:
-        sreya_user = User(
+    # Target Citizen: Sreya Sengupta (org_id = None)
+    sreya = db.query(User).filter((User.username == "sreya") | (User.email == "sreya@demo.com")).first()
+    if not sreya:
+        sreya = User(
             id="user_sreya_001",
             org_id=None,
             username="sreya",
@@ -125,93 +298,34 @@ def seed_demo_data(db: Session) -> None:
             full_name="Sreya Sengupta",
             role="USER",
         )
-        db.add(sreya_user)
+        db.add(sreya)
     else:
-        sreya_user.org_id = None
-        sreya_user.full_name = "Sreya Sengupta"
-        sreya_user.email = "sreya@demo.com"
-        sreya_user.role = "USER"
-        sreya_user.hashed_password = hash_password("sreya123")
+        sreya.org_id = None
+        sreya.full_name = "Sreya Sengupta"
+        sreya.role = "USER"
+        sreya.hashed_password = hash_password("sreya123")
 
     # Attacker / Caller Persona (org_id = None, role = CALLER)
-    attacker_user = db.query(User).filter((User.username == "attacker") | (User.email == "attacker@demo.com")).first()
-    if not attacker_user:
-        attacker_user = User(
+    attacker = db.query(User).filter((User.username == "attacker") | (User.email == "attacker@demo.com")).first()
+    if not attacker:
+        attacker = User(
             id="user_attacker_001",
             org_id=None,
             username="attacker",
             email="attacker@demo.com",
             hashed_password=hash_password("attacker123"),
-            full_name="External Attacker / Caller",
+            full_name="VoiceShield Attack Simulator",
             role="CALLER",
         )
-        db.add(attacker_user)
+        db.add(attacker)
     else:
-        attacker_user.org_id = None
-        attacker_user.full_name = "External Attacker / Caller"
-        attacker_user.email = "attacker@demo.com"
-        attacker_user.role = "CALLER"
-        attacker_user.hashed_password = hash_password("attacker123")
-
-    # External Caller Simulator (backward compatibility for existing tests)
-    caller_user = db.query(User).filter_by(username="caller").first()
-    if not caller_user:
-        caller_user = User(
-            id="user_caller_001",
-            org_id=None,
-            username="caller",
-            email="aarav@external.net",
-            hashed_password=hash_password("caller123"),
-            full_name="Aarav Sharma (External Caller)",
-            role="CALLER",
-        )
-        db.add(caller_user)
-    else:
-        caller_user.org_id = None
-        caller_user.role = "CALLER"
-        caller_user.full_name = "Aarav Sharma (External Caller)"
-
-    # 3. Org B: Kavach Cyber Defense (Unrelated Org for multi-tenant isolation testing)
-    org_b = db.query(Organization).filter((Organization.id == "org_cyber_002") | (Organization.code == "KAVACH") | (Organization.code == "CYBERGUARD")).first()
-    if not org_b:
-        org_b = Organization(
-            id="org_cyber_002",
-            name="Kavach Cyber Defense",
-            code="KAVACH",
-        )
-        db.add(org_b)
-        db.flush()
-    else:
-        org_b.name = "Kavach Cyber Defense"
-        org_b.code = "KAVACH"
-
-    policy_b = db.query(SecurityPolicy).filter_by(org_id=org_b.id).first()
-    if not policy_b:
-        policy_b = SecurityPolicy(
-            org_id=org_b.id,
-            policy_config_json='{"risk_score_high_threshold": 65.0, "risk_score_critical_threshold": 85.0, "auto_warn_user_on_high": true, "auto_alert_org_on_high": true, "auto_block_on_critical_clone": false, "enforce_protected_vip_rules": true, "sensitive_intent_escalation": true}',
-        )
-        db.add(policy_b)
-
-    operator_b = db.query(User).filter_by(username="operator_b").first()
-    if not operator_b:
-        operator_b = User(
-            id="user_operator_b",
-            org_id=org_b.id,
-            username="operator_b",
-            email="arjun.verma@kavach.in",
-            hashed_password=hash_password("operator123"),
-            full_name="Arjun Verma (Kavach SOC)",
-            role="SECURITY_OPERATOR",
-        )
-        db.add(operator_b)
-    else:
-        operator_b.org_id = org_b.id
-        operator_b.full_name = "Arjun Verma (Kavach SOC)"
-        operator_b.email = "arjun.verma@kavach.in"
+        attacker.org_id = None
+        attacker.full_name = "VoiceShield Attack Simulator"
+        attacker.role = "CALLER"
+        attacker.hashed_password = hash_password("attacker123")
 
     db.commit()
-    log.info("[Seed] Platform initialization complete: Sreya Sengupta (Citizen), Rajesh Malhotra (CFO), Priya Nair (Apex SOC), Arjun Verma (Kavach SOC).")
+    log.info("[Seed] Initialized 5 organizations: SBI, IOB, UIDAI, Police Department, DRDO, plus 10 protected identities.")
 
 
 @contextlib.asynccontextmanager
@@ -263,6 +377,7 @@ def create_app() -> FastAPI:
     app.include_router(policies_router)
     app.include_router(audit_router)
     app.include_router(analyze_router)
+    app.include_router(tts_router)
 
     # Include WebSocket routes
     app.include_router(websocket_router)

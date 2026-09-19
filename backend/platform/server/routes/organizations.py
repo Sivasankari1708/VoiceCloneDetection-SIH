@@ -20,6 +20,13 @@ from backend.platform.server.dependencies import get_current_org, get_current_us
 router = APIRouter(prefix="/api/organizations", tags=["Organizations"])
 
 
+@router.get("", response_model=List[OrganizationDto])
+def list_organizations(db: Session = Depends(get_db)):
+    """List all registered organizations for demo and selection."""
+    orgs = db.query(Organization).filter_by(is_active=True).all()
+    return [OrganizationDto(**o.to_dict()) for o in orgs]
+
+
 @router.get("/me", response_model=OrganizationDto)
 def get_my_organization(
     org: Organization = Depends(get_current_org),

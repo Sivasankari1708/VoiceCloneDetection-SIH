@@ -1,13 +1,22 @@
-/* VoiceShield — global styles */
+/* VoiceShield — Modern Enterprise Cybersecurity Styles */
 @import "tailwindcss";
 
 @layer base {
   :root {
-    --vs-safe: #16a34a;
-    --vs-low: #2563eb;
-    --vs-medium: #d97706;
-    --vs-high: #ea580c;
-    --vs-critical: #dc2626;
+    --vs-primary-dark: #0b192c;
+    --vs-primary-blue: #1e3a8a;
+    --vs-brand-accent: #2563eb;
+    --vs-light-blue: #f0f7ff;
+    --vs-ice-blue: #e0effe;
+    --vs-cool-grey-50: #f8fafc;
+    --vs-cool-grey-100: #f1f5f9;
+    --vs-cool-grey-200: #e2e8f0;
+    --vs-cool-grey-400: #94a3b8;
+    --vs-cool-grey-600: #475569;
+    --vs-cool-grey-900: #0f172a;
+    --vs-danger-translucent: rgba(239, 68, 68, 0.08);
+    --vs-danger-border: rgba(239, 68, 68, 0.25);
+    --vs-danger-solid: #dc2626;
   }
 
   * {
@@ -15,8 +24,8 @@
   }
 
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    @apply bg-slate-50 text-slate-900 antialiased selection:bg-blue-100 selection:text-blue-900;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
 }
 
@@ -26,40 +35,78 @@
     scrollbar-color: #cbd5e1 transparent;
   }
 
-  .waveform-bar {
-    transform-origin: bottom;
+  /* Frosted enterprise cards */
+  .card-enterprise {
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(226, 232, 240, 0.85);
+    border-radius: 1rem;
+    box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.04), 0 1px 2px -1px rgba(15, 23, 42, 0.04);
+  }
+
+  .card-enterprise-interactive {
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .card-enterprise-interactive:hover {
+    border-color: rgba(147, 197, 253, 0.9);
+    box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.06), 0 2px 6px -2px rgba(15, 23, 42, 0.04);
+  }
+
+  /* Translucent red for genuinely critical intervention states */
+  .card-critical-intervention {
+    background: rgba(254, 242, 242, 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(248, 113, 113, 0.4);
+    border-radius: 1rem;
+    box-shadow: 0 4px 16px -2px rgba(220, 38, 38, 0.08);
+  }
+
+  /* Subtle highlight for sensitive keywords */
+  .keyword-sensitive {
+    background: rgba(254, 226, 226, 0.75);
+    color: #b91c1c;
+    padding: 0.1rem 0.35rem;
+    border-radius: 0.25rem;
+    font-weight: 600;
+    border: 1px solid rgba(252, 165, 165, 0.6);
+  }
+
+  .keyword-urgent {
+    background: rgba(254, 243, 199, 0.8);
+    color: #b45309;
+    padding: 0.1rem 0.35rem;
+    border-radius: 0.25rem;
+    font-weight: 600;
+    border: 1px solid rgba(253, 230, 138, 0.7);
   }
 }
 
-/* Waveform animation keyframes */
-@keyframes wave-pulse {
-  0%, 100% { transform: scaleY(0.2); }
-  50% { transform: scaleY(1); }
+/* Restrained animations */
+@keyframes calm-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.65; transform: scale(0.96); }
 }
 
-@keyframes severity-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+@keyframes slow-fade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes slide-in-right {
-  from { transform: translateX(20px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+@keyframes countdown-pulse {
+  0% { transform: scale(1.3); opacity: 0.4; }
+  50% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.92); opacity: 0.85; }
 }
 
-@keyframes fade-in-up {
-  from { transform: translateY(8px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+.animate-calm-pulse {
+  animation: calm-pulse 2.2s ease-in-out infinite;
 }
 
-.animate-slide-in-right {
-  animation: slide-in-right 0.3s ease-out;
+.animate-slow-fade {
+  animation: slow-fade 0.25s ease-out;
 }
 
-.animate-fade-in-up {
-  animation: fade-in-up 0.3s ease-out;
-}
-
-.animate-severity-pulse {
-  animation: severity-pulse 2s ease-in-out infinite;
+.animate-countdown {
+  animation: countdown-pulse 0.9s cubic-bezier(0.16, 1, 0.3, 1) infinite;
 }

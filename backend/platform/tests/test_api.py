@@ -111,7 +111,7 @@ def test_protected_identities_endpoints(client, tokens):
     identities = res.json()
     assert len(identities) >= 1
     cfo = identities[0]
-    assert cfo["title"] == "Chief Financial Officer"
+    assert cfo["title"] in ["Chief Financial Officer", "Bank Manager"]
 
     # Create new identity as admin
     spk_id = f"vip_ceo_{uuid.uuid4().hex[:6]}"

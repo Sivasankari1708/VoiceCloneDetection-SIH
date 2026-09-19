@@ -27,7 +27,7 @@ export default function LoginPage() {
     if (user.role === 'CALLER' || user.role === 'ATTACKER') {
       navigate('/attacker');
     } else {
-      navigate('/home');
+      navigate('/live');
     }
   };
 

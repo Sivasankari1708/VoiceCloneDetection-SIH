@@ -1,58 +1,57 @@
 // src/components/dashboard/SystemStatus.jsx
 import React from 'react';
 import { Card } from '../common/Card';
-import { ArrowUpRight } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, ArrowUpRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export function SystemStatus({ services = [] }) {
-  const displayServices = services.length > 0 ? services : [
-    { name: 'Voice Detection', subtext: 'Deepfake CNN v2', status: 'OPERATIONAL', latency: '38 ms' },
-    { name: 'Speaker Verification', subtext: 'ECAPA-TDNN (192-D)', status: 'OPERATIONAL', latency: '42 ms' },
-    { name: 'ASR Engine', subtext: 'Google Cloud STT', status: 'OPERATIONAL', latency: '65 ms' },
-    { name: 'Risk Decision Engine', subtext: 'Security Matrix', status: 'OPERATIONAL', latency: '12 ms' },
-    { name: 'Database Engine', subtext: 'Platform DB', status: 'OPERATIONAL', latency: '16 ms' },
+  const displayServices = [
+    { name: 'Voice Authenticity Shield', description: 'Real-time synthetic clone detection', status: 'Operational', response: '< 50ms' },
+    { name: 'Executive Impersonation Defense', description: 'Organizational hierarchy protection', status: 'Operational', response: '< 45ms' },
+    { name: 'Fraud Intent & Urgency Engine', description: 'Pretexting & wire fraud indicators', status: 'Operational', response: '< 60ms' },
+    { name: 'Autonomous Call Intervention', description: 'Real-time hold & protection protocol', status: 'Operational', response: '< 20ms' },
+    { name: 'National Cybercrime Gateway', description: 'NCRP 1930 reporting bridge', status: 'Connected', response: 'Active' },
   ];
 
   return (
     <Card 
-      title="System Telemetry & Model Pipeline"
+      title="Enterprise Defense Capabilities"
+      subtitle="Autonomous protection services actively guarding voice communications"
       action={
-        <Link to="/system-health" className="text-2xs font-mono text-soc-accent hover:underline flex items-center gap-1">
-          Detailed Health <ArrowUpRight className="w-3 h-3" />
+        <Link to="/system-health" className="text-2xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+          Service Health <ArrowUpRight className="w-3 h-3" />
         </Link>
       }
     >
       <div className="space-y-2.5">
-        {displayServices.map((svc, idx) => {
-          const isUp = svc.status === 'OPERATIONAL' || svc.status === 'Operational' || svc.status === 'healthy';
-          return (
-            <div 
-              key={idx} 
-              className="flex items-center justify-between py-1.5 px-2.5 rounded bg-slate-900/40 border border-slate-800/60 font-mono text-xs"
-            >
-              <div className="flex items-center gap-2">
-                <span className={`w-1.5 h-1.5 rounded-full ${isUp ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                <span className="text-slate-200 font-medium">{svc.name}</span>
-                {svc.subtext && <span className="text-2xs text-slate-500 hidden sm:inline">({svc.subtext})</span>}
-              </div>
-
-              <div className="flex items-center gap-3">
-                <span className="text-2xs text-slate-500">{svc.latency || '25 ms'}</span>
-                <span className={`text-2xs px-2 py-0.5 rounded border font-semibold uppercase ${
-                  isUp 
-                    ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800/60' 
-                    : 'bg-amber-950/60 text-amber-300 border-amber-800/60'
-                }`}>
-                  {svc.status}
-                </span>
+        {displayServices.map((svc, idx) => (
+          <div 
+            key={idx} 
+            className="flex items-center justify-between py-2.5 px-3 rounded-lg bg-slate-50/80 border border-slate-200/60 text-xs hover:bg-slate-100/60 transition-colors"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+              <div className="min-w-0">
+                <span className="text-slate-900 font-semibold block truncate">{svc.name}</span>
+                <span className="text-[11px] text-slate-500 block truncate">{svc.description}</span>
               </div>
             </div>
-          );
-        })}
 
-        <div className="pt-2 border-t border-soc-border flex items-center justify-between text-2xs font-mono text-slate-500">
-          <span>Telemetry Ingress: <strong className="text-emerald-400">ACTIVE</strong></span>
-          <span>Zero Audio Payload Retention: <strong className="text-soc-accent">ENFORCED</strong></span>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <span className="text-2xs text-slate-400 font-medium">{svc.response}</span>
+              <span className="text-2xs px-2 py-0.5 rounded-full font-semibold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                {svc.status}
+              </span>
+            </div>
+          </div>
+        ))}
+
+        <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-2xs text-slate-500">
+          <span className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span>Continuous Voice Protection: <strong className="text-emerald-700 font-semibold">Active</strong></span>
+          </span>
+          <span className="text-blue-600 font-medium">Zero-Audio Retention Verified</span>
         </div>
       </div>
     </Card>

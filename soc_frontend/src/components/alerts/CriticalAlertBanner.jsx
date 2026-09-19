@@ -1,7 +1,7 @@
 // src/components/alerts/CriticalAlertBanner.jsx
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertOctagon, CheckCircle2, ArrowRight, ShieldAlert, X } from 'lucide-react';
+import { AlertOctagon, ArrowRight, X, ShieldAlert } from 'lucide-react';
 import { Button } from '../common/Button';
 
 export function CriticalAlertBanner({ incident, onAcknowledge, onEscalate }) {
@@ -28,11 +28,11 @@ export function CriticalAlertBanner({ incident, onAcknowledge, onEscalate }) {
   };
 
   return (
-    <div className="bg-red-950/40 border border-red-800/80 rounded-lg p-4 mb-6 relative shadow-lg shadow-red-950/20">
+    <div className="bg-red-50/90 border border-red-200/90 rounded-xl p-4 sm:p-5 mb-6 relative shadow-xs">
       <button 
         onClick={() => setDismissed(true)}
-        className="absolute top-3 right-3 text-red-400/60 hover:text-red-300 p-1 rounded"
-        title="Dismiss banner"
+        className="absolute top-3.5 right-3.5 text-slate-400 hover:text-slate-700 p-1 rounded-lg transition-colors cursor-pointer"
+        title="Dismiss alert banner"
       >
         <X className="w-4 h-4" />
       </button>
@@ -40,52 +40,49 @@ export function CriticalAlertBanner({ incident, onAcknowledge, onEscalate }) {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         {/* Left Warning Info */}
         <div className="flex items-start gap-3.5">
-          <div className="w-10 h-10 rounded bg-red-900/60 border border-red-600/80 flex items-center justify-center text-red-300 shrink-0 mt-0.5 animate-pulse">
+          <div className="w-10 h-10 rounded-xl bg-red-100/90 border border-red-200 flex items-center justify-center text-red-700 shrink-0 mt-0.5">
             <AlertOctagon className="w-5 h-5" />
           </div>
 
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
-              <span className="font-mono text-2xs font-bold uppercase tracking-widest px-2 py-0.5 bg-red-900/80 text-red-200 border border-red-600 rounded">
-                CRITICAL SECURITY ALERT
+              <span className="font-sans text-xs font-semibold px-2.5 py-0.5 bg-red-100/80 text-red-800 border border-red-200 rounded-md">
+                Critical Security Intervention
               </span>
-              <span className="font-mono text-xs text-red-300 font-semibold">{incident.id}</span>
-              <span className="text-xs text-slate-400 font-mono">• {incident.channel}</span>
+              <span className="font-sans text-xs text-slate-700 font-semibold">{incident.id}</span>
+              <span className="text-xs text-slate-500">• {incident.channel || 'VoIP Ingress'}</span>
             </div>
 
-            <h2 className="text-sm font-semibold text-slate-100 mt-1">
-              Potential voice impersonation attack detected.
+            <h2 className="text-sm font-semibold text-slate-900 mt-1">
+              Active Executive Voice Impersonation Detected
             </h2>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-1 mt-2 text-xs font-mono text-slate-300">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-1 mt-2 text-xs font-sans text-slate-700">
               <div>
-                <span className="text-slate-500">Claimed Identity: </span>
-                <span className="font-semibold text-red-300">{incident.claimedIdentity?.name || 'CFO'}</span>
+                <span className="text-slate-500">Claimed Executive: </span>
+                <span className="font-semibold text-red-700">{incident.claimedIdentity?.name || 'Chief Financial Officer'}</span>
               </div>
               <div>
-                <span className="text-slate-500">Target: </span>
-                <span className="font-semibold text-slate-200">{incident.target?.name || 'Finance Officer'}</span>
+                <span className="text-slate-500">Target Employee: </span>
+                <span className="font-semibold text-slate-900">{incident.target?.name || 'Finance Executive'}</span>
               </div>
               <div>
-                <span className="text-slate-500">Risk: </span>
-                <span className="font-bold text-red-400">{incident.riskScore} / 100 (CRITICAL)</span>
+                <span className="text-slate-500">Protection Action: </span>
+                <span className="font-semibold text-emerald-700">Autonomous Hold & Intervention</span>
               </div>
             </div>
 
-            {/* Evidence List */}
-            <div className="mt-2 text-2xs font-mono text-slate-300 flex items-center gap-3 flex-wrap">
-              <span className="text-slate-500 font-semibold uppercase">Evidence:</span>
-              <span className="inline-flex items-center gap-1 text-red-300">
-                • High synthetic-voice probability ({Math.round(incident.detectionEvidence?.syntheticProbability * 100)}%)
+            {/* Key Security Observations */}
+            <div className="mt-2 text-xs font-sans text-slate-600 flex items-center gap-3 flex-wrap">
+              <span className="text-slate-500 font-semibold text-2xs uppercase">Threat Indicators:</span>
+              <span className="inline-flex items-center gap-1 text-red-700 font-medium">
+                • Synthetic Voice Inconsistency
               </span>
-              <span className="inline-flex items-center gap-1 text-red-300">
-                • Speaker identity conflict ({incident.detectionEvidence?.identityVerification})
+              <span className="inline-flex items-center gap-1 text-red-700 font-medium">
+                • Biometric Identity Mismatch
               </span>
-              <span className="inline-flex items-center gap-1 text-amber-300">
-                • Sensitive financial request
-              </span>
-              <span className="inline-flex items-center gap-1 text-amber-300">
-                • Urgency detected
+              <span className="inline-flex items-center gap-1 text-amber-800">
+                • Urgent Financial Disbursement Request
               </span>
             </div>
           </div>
@@ -99,7 +96,7 @@ export function CriticalAlertBanner({ incident, onAcknowledge, onEscalate }) {
             onClick={handleAcknowledge}
             disabled={loadingAction || incident.status === 'UNDER_INVESTIGATION'}
           >
-            {incident.status === 'UNDER_INVESTIGATION' ? 'ACKNOWLEDGED' : 'ACKNOWLEDGE'}
+            {incident.status === 'UNDER_INVESTIGATION' ? 'Acknowledged' : 'Acknowledge'}
           </Button>
 
           <Button
@@ -108,7 +105,7 @@ export function CriticalAlertBanner({ incident, onAcknowledge, onEscalate }) {
             onClick={handleInvestigate}
             icon={ArrowRight}
           >
-            INVESTIGATE
+            Investigate Incident
           </Button>
 
           <Button
@@ -117,10 +114,11 @@ export function CriticalAlertBanner({ incident, onAcknowledge, onEscalate }) {
             onClick={handleEscalate}
             disabled={loadingAction || incident.status === 'ESCALATED'}
           >
-            {incident.status === 'ESCALATED' ? 'ESCALATED' : 'ESCALATE'}
+            {incident.status === 'ESCALATED' ? 'Escalated' : 'Escalate (CIRT)'}
           </Button>
         </div>
       </div>
     </div>
   );
 }
+

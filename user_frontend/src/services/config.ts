@@ -54,3 +54,8 @@ export const config = {
   useMockStream: import.meta.env.VITE_USE_MOCK_STREAM === 'true',
 } as const;
 
+export function getApiBaseUrl(): string {
+  return config.apiBaseUrl;
+}
+
+

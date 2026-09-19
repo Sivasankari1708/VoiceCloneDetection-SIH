@@ -25,7 +25,6 @@ export function Reports() {
   });
 
   const handleExport = (report) => {
-    // Generate clean downloadable summary report in-browser
     const content = `=====================================================
 VOICESHIELD ENTERPRISE SOC - SECURITY DOSSIER
 =====================================================
@@ -66,35 +65,35 @@ with enterprise voice data privacy protocols.
   };
 
   return (
-    <div className="space-y-4 font-mono">
+    <div className="space-y-4 font-sans text-slate-800">
       {/* Title */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-soc-border">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200/80">
         <div>
-          <h2 className="text-sm font-bold tracking-wider text-slate-100 uppercase flex items-center gap-2">
-            <FileText className="w-4 h-4 text-soc-accent" />
+          <h2 className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+            <FileText className="w-4 h-4 text-blue-600" />
             <span>Voice Security Intelligence & Compliance Reports</span>
           </h2>
-          <p className="text-2xs text-slate-500 mt-0.5">
+          <p className="text-xs text-slate-500 mt-0.5">
             Automated compliance summaries, threat trend analyses, and forensic incident dossiers
           </p>
         </div>
       </div>
 
       {downloadSuccess && (
-        <div className="p-3 bg-emerald-950/80 border border-emerald-700 text-emerald-200 text-xs rounded-md flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+        <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs rounded-xl flex items-center gap-2 shadow-xs font-medium">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
           <span>{downloadSuccess}</span>
         </div>
       )}
 
       {/* Filter Row */}
-      <div className="p-3 bg-soc-card border border-soc-border rounded-md flex flex-wrap items-center justify-between gap-3">
+      <div className="p-3.5 bg-white border border-slate-200/90 rounded-2xl shadow-xs flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <label className="text-2xs text-slate-400 uppercase font-semibold">Report Type:</label>
+          <label className="text-2xs text-slate-500 uppercase font-semibold">Report Type:</label>
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
-            className="bg-slate-900 border border-slate-700/80 rounded px-2.5 py-1 text-xs text-slate-300 focus:outline-none focus:border-soc-accent"
+            className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:bg-white focus:border-blue-600 transition"
           >
             <option value="ALL">All Report Types</option>
             <option value="Weekly">Weekly Voice Security Reports</option>
@@ -104,7 +103,7 @@ with enterprise voice data privacy protocols.
           </select>
         </div>
 
-        <span className="text-2xs text-slate-500">
+        <span className="text-xs text-slate-500 font-medium">
           Showing {filtered.length} generated reports
         </span>
       </div>
@@ -112,50 +111,50 @@ with enterprise voice data privacy protocols.
       {/* Reports Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {filtered.map((report) => (
-          <div key={report.id} className="p-4 bg-soc-card border border-soc-border rounded-md space-y-3 flex flex-col justify-between hover:border-slate-700 transition-colors">
+          <div key={report.id} className="p-5 bg-white border border-slate-200/90 rounded-2xl shadow-xs space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors">
             <div>
               <div className="flex items-center justify-between">
-                <span className="text-2xs font-bold text-soc-accent uppercase tracking-wider">{report.id}</span>
-                <span className="text-2xs text-slate-500">{report.period}</span>
+                <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">{report.id}</span>
+                <span className="text-xs text-slate-500">{report.period}</span>
               </div>
 
-              <h3 className="text-sm font-semibold text-slate-100 mt-1">
+              <h3 className="text-sm font-semibold text-slate-900 mt-1">
                 {report.title}
               </h3>
-              <p className="text-2xs text-slate-400 mt-1">
-                Type: <span className="text-slate-300 font-medium">{report.type}</span>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Classification: <span className="text-slate-800 font-medium">{report.type}</span>
               </p>
 
-              <p className="text-xs text-slate-400 mt-2 bg-slate-950/50 p-2.5 rounded border border-slate-800/80 leading-relaxed">
+              <p className="text-xs text-slate-600 mt-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200/80 leading-relaxed">
                 {report.summary}
               </p>
 
               {/* Stats pill row */}
-              <div className="grid grid-cols-3 gap-2 mt-3 text-center text-2xs">
-                <div className="p-2 bg-slate-900 rounded border border-slate-800">
-                  <span className="text-slate-500 block">Analyzed</span>
-                  <span className="font-bold text-slate-200">{report.stats.analyzed}</span>
+              <div className="grid grid-cols-3 gap-2 mt-3 text-center text-xs">
+                <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/80">
+                  <span className="text-slate-500 text-2xs block uppercase font-medium">Analyzed</span>
+                  <span className="font-bold text-slate-900">{report.stats.analyzed}</span>
                 </div>
-                <div className="p-2 bg-slate-900 rounded border border-slate-800">
-                  <span className="text-slate-500 block">Critical</span>
-                  <span className="font-bold text-red-400">{report.stats.critical}</span>
+                <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/80">
+                  <span className="text-slate-500 text-2xs block uppercase font-medium">Critical</span>
+                  <span className="font-bold text-red-700">{report.stats.critical}</span>
                 </div>
-                <div className="p-2 bg-slate-900 rounded border border-slate-800">
-                  <span className="text-slate-500 block">Neutralized</span>
-                  <span className="font-bold text-emerald-400">{report.stats.confirmedAttacks}</span>
+                <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/80">
+                  <span className="text-slate-500 text-2xs block uppercase font-medium">Neutralized</span>
+                  <span className="font-bold text-emerald-700">{report.stats.confirmedAttacks}</span>
                 </div>
               </div>
             </div>
 
-            <div className="pt-3 border-t border-soc-border flex items-center justify-between">
-              <span className="text-2xs text-slate-500">Format: {report.format}</span>
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-xs text-slate-500">Format: {report.format}</span>
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={() => handleExport(report)}
                 icon={Download}
               >
-                Export Report
+                Export Dossier
               </Button>
             </div>
           </div>
@@ -164,3 +163,4 @@ with enterprise voice data privacy protocols.
     </div>
   );
 }
+
